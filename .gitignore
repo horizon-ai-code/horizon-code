@@ -1,0 +1,11 @@
+models/
+
+db/
+
+!models/model_config.yaml
+
+**/__pycache__/*
+
+.idea
+
+GEMINI.md
