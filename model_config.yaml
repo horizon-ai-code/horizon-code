@@ -1,0 +1,23 @@
+planner:
+  temp: 0.7
+  max_tokens: 4096
+  context_size: 6144
+  layers: 28
+  filename: "deepseek_engine.gguf"
+  sysprompt: "|"
+
+generator:
+  temp: 0.7
+  max_tokens: 4096
+  context_size: 6144
+  layers: 36
+  filename: "deepseek_engine.gguf"
+  sysprompt: "|"
+
+judge:
+  temp: 0.7
+  max_tokens: 4096
+  context_size: 6144
+  layers: 28
+  filename: "deepseek_engine.gguf"
+  sysprompt: "|"
