@@ -7,6 +7,7 @@ from llama_cpp import ChatCompletionRequestMessage, CreateChatCompletionResponse
 from app.modules.agent_service import AgentService
 from app.modules.validator import Validator
 from app.modules.websocket_manager import WebSocketManager
+from app.utils.paths import MODELS_CONFIG_PATH, MODELS_DIR
 
 
 class Orchestrator:
@@ -21,86 +22,109 @@ class Orchestrator:
         self.websocket_manager = websocket_manager
 
         try:
-            with open("model_config.yaml", "r") as config:
+            with open(MODELS_CONFIG_PATH, "r") as config:
                 self.model_config: dict = yaml.safe_load(config)
         except yaml.YAMLError as e:
             print(f"Error loading config: {e}")
 
-    #     def execute_orchestration(self, websocket, user_code, user_instruction):
-    #         current_code = user_code
-    #         current_instruction = user_instruction
+    async def execute_orchestration(self, websocket, user_code, user_instruction):
+        current_code = user_code
+        current_instruction = user_instruction
+        iteration = 0
 
-    #         while True:
-    #             await self.agent_service.load(
-    #                 path=str(
-    #                     MODELS_DIR / self.model_config["models"][planner_model]["file_name"]
-    #                 ),
-    #                 n_gpu_layers=self.model_config["models"][planner_model]["layers"],
-    #                 n_ctx=self.model_config["agents"]["planner"]["context_tokens"],
-    #             )
+        while True:
+            iteration += 1
+            print(f"\n[Orchestrator] ── Iteration {iteration} ──────────────────────")
 
-    #             plan, instructions = await self.generate_plan_and_instructions(
-    #                 current_code, current_instruction
-    #             )
+            print("[Planner]    Loading model...")
+            await self.agent_service.load(
+                path=str(MODELS_DIR / self.model_config["planner"]["filename"]),
+                n_gpu_layers=self.model_config["planner"]["layers"],
+                n_ctx=self.model_config["planner"]["context_size"],
+            )
 
-    #             await self.agent_service.swap(
-    #                 path=str(
-    #                     MODELS_DIR
-    #                     / self.model_config["models"][generator_model]["file_name"]
-    #                 ),
-    #                 n_gpu_layers=self.model_config["models"][generator_model]["layers"],
-    #                 n_ctx=self.model_config["agents"]["generator"]["context_tokens"],
-    #             )
+            print("[Planner]    Generating plan & instructions...")
+            result = await self.generate_plan_and_instruction(
+                current_code, current_instruction
+            )
+            instructions = result["instructions"]
+            print("[Planner]    Done.")
 
-    #             refactored_code = await self.generate_refactored_code(
-    #                 current_code, instructions
-    #             )
+            print("[Generator]  Swapping model...")
+            await self.agent_service.swap(
+                path=str(MODELS_DIR / self.model_config["generator"]["filename"]),
+                n_gpu_layers=self.model_config["generator"]["layers"],
+                n_ctx=self.model_config["generator"]["context_size"],
+            )
 
-    #             syntax_verdict = self.validator.check_syntax(refactored_code)
+            print("[Generator]  Refactoring code...")
+            refactored_code = await self.generate_refactored_code(
+                current_code, instructions
+            )
+            print("[Generator]  Done.")
 
-    #             if syntax_verdict["is_valid"]:
-    #                 current_code = refactored_code
-    #                 break
+            print("[Validator]  Checking syntax...")
+            syntax_verdict = self.validator.check_syntax(refactored_code["code"])
+            print(
+                f"[Validator]  is_valid={syntax_verdict['is_valid']}, tier={syntax_verdict['structure_tier']}"
+            )
 
-    #             await self.agent_service.swap(
-    #                 path=str(
-    #                     MODELS_DIR / self.model_config["models"][judge_model]["file_name"]
-    #                 ),
-    #                 n_gpu_layers=self.model_config["models"][judge_model]["layers"],
-    #                 n_ctx=self.model_config["agents"]["judge"]["context_tokens"],
-    #             )
+            if syntax_verdict["is_valid"]:
+                print("[Validator]  Syntax OK — exiting loop.")
+                current_code = refactored_code["code"]
+                break
 
-    #             log_interpretation, judge_instructions = (
-    #                 self.interpret_errors_and_generate_instructions(
-    #                     syntax_verdict["errors"]
-    #                 )
-    #             )
+            print(
+                f"[Validator]  {len(syntax_verdict['errors'])} error(s) found — handing off to Judge."
+            )
 
-    #             self.agent_service.unload()
+            print("[Judge]      Swapping model...")
+            await self.agent_service.swap(
+                path=str(MODELS_DIR / self.model_config["judge"]["filename"]),
+                n_gpu_layers=self.model_config["judge"]["layers"],
+                n_ctx=self.model_config["judge"]["context_size"],
+            )
 
-    #             current_code = refactored_code
-    #             current_instruction = judge_instructions
+            print("[Judge]      Interpreting errors & generating fix instructions...")
+            judge_result = await self.interpret_errors_and_generate_instructions(
+                refactored_code["code"], syntax_verdict["errors"]
+            )
+            print("[Judge]      Done.")
 
-    #         complexity = self.validator.check_cc(current_code)
+            print("[Orchestrator] Unloading model, preparing next iteration...")
+            # await self.agent_service.unload()
 
-    #         await self.agent_service.load(
-    #             path=str(
-    #                 MODELS_DIR / self.model_config["models"][judge_model]["file_name"]
-    #             ),
-    #             n_gpu_layers=self.model_config["models"][judge_model]["layers"],
-    #             n_ctx=self.model_config["agents"]["judge"]["context_tokens"],
-    #         )
+            current_code = refactored_code["code"]
+            current_instruction = judge_result["instructions"]
 
-    #         insights = self.generate_insights(user, current_code, complexity)
+        print("\n[Validator]  Computing cyclomatic complexity...")
+        complexity = self.validator.check_complexity(current_code)
+        complexity_score = complexity["complexity_score"]
+        print(
+            f"[Validator]  complexity_score={complexity_score}, fallback={complexity['is_fallback']}"
+        )
 
-    #         return current_code, insights
+        print("[Judge]      Loading model for insights...")
+        await self.agent_service.swap(
+            path=str(MODELS_DIR / self.model_config["judge"]["filename"]),
+            n_gpu_layers=self.model_config["judge"]["layers"],
+            n_ctx=self.model_config["judge"]["context_size"],
+        )
+
+        print("[Judge]      Generating insights...")
+        insights = await self.generate_insights(
+            user_code, current_code, complexity_score
+        )
+        print("[Judge]      Done. Orchestration complete.\n")
+
+        return current_code, insights
 
     async def generate_plan_and_instruction(self, code: str, instructions: str) -> dict:
         prompt: str = f"<code>{code}</code>\n<instruction>{instructions}</instruction>"
         query: List[ChatCompletionRequestMessage] = [
             {
                 "role": "system",
-                "content": self.model_config["agents"]["generator"]["system_prompt"],
+                "content": self.model_config["planner"]["sysprompt"],
             },
             {"role": "user", "content": prompt},
         ]
@@ -113,6 +137,10 @@ class Orchestrator:
         )
 
         text: str = self._get_response(raw_reponse)
+        print(f"\n[Planner RAW OUTPUT]\n{'─' * 50}\nPlan:\n{text}{'─' * 50}")
+        print(
+            f"\n[Planner PARSED OUTPUT]\n{'─' * 50}\nPlan:\n{self._extract_text(raw_text=text, tags='plan')}\nInstructions:\n{self._extract_text(raw_text=text, tags='instructions')}\n{'─' * 50}"
+        )
 
         result: dict[str, str] = {
             "plan": self._extract_text(raw_text=text, tags="plan"),
@@ -126,7 +154,7 @@ class Orchestrator:
         query: List[ChatCompletionRequestMessage] = [
             {
                 "role": "system",
-                "content": self.model_config["agents"]["generator"]["system_prompt"],
+                "content": self.model_config["generator"]["sysprompt"],
             },
             {"role": "user", "content": prompt},
         ]
@@ -139,6 +167,7 @@ class Orchestrator:
         )
 
         text: str = self._get_response(raw_reponse)
+        print(f"\n[Generator RAW OUTPUT]\n{'─' * 50}\n{text}\n{'─' * 50}")
 
         result: dict[str, str] = {
             "code": self._extract_text(raw_text=text, tags="code"),
@@ -156,7 +185,7 @@ class Orchestrator:
         query: List[ChatCompletionRequestMessage] = [
             {
                 "role": "system",
-                "content": self.model_config["judge"]["system_prompt"],
+                "content": self.model_config["judge"]["sysprompt_error_interpreter"],
             },
             {"role": "user", "content": prompt},
         ]
@@ -169,9 +198,37 @@ class Orchestrator:
         )
 
         text: str = self._get_response(raw_reponse)
+        # print(f"\n[Judge ERROR INTERPRETER RAW OUTPUT]\n{'─' * 50}\n{text}\n{'─' * 50}")
 
         result: dict[str, str] = {
-            "code": self._extract_text(raw_text=text, tags="code"),
+            "interpretation": self._extract_text(raw_text=text, tags="interpretation"),
+            "instructions": self._extract_text(raw_text=text, tags="instructions"),
+        }
+
+        return result
+
+    async def generate_insights(self, user_code: str, refactored_code: str, cc: int):
+        prompt: str = f"<user_code>{user_code}</user_code>\n<refactored_code>{refactored_code}</refactored_code><cc>{cc}</cc>"
+        query: List[ChatCompletionRequestMessage] = [
+            {
+                "role": "system",
+                "content": self.model_config["judge"]["sysprompt_insights"],
+            },
+            {"role": "user", "content": prompt},
+        ]
+
+        raw_reponse: CreateChatCompletionResponse = await self.agent_service.generate(
+            messages=query,
+            temp=self.model_config["judge"]["temperature"],
+            max_tokens=self.model_config["judge"]["max_tokens"],
+            stream=False,
+        )
+
+        text: str = self._get_response(raw_reponse)
+        # print(f"\n[Judge INSIGHTS RAW OUTPUT]\n{'─' * 50}\n{text}\n{'─' * 50}")
+
+        result: dict[str, str] = {
+            "insights": self._extract_text(raw_text=text, tags="insights"),
         }
 
         return result
@@ -180,10 +237,20 @@ class Orchestrator:
         return response["choices"][0]["message"]["content"]  # type: ignore
 
     def _extract_text(self, raw_text: str, tags: str) -> str:
+        # Step 1: Strip out the <think> block(s) completely.
+        # re.DOTALL is mandatory here too, so it catches multi-line thought processes.
+        # We use re.IGNORECASE just in case the model outputs <THINK> or similar.
+        text_without_thoughts = re.sub(
+            r"<think>.*?</think>", "", raw_text, flags=re.DOTALL | re.IGNORECASE
+        )
+
+        # Step 2: Run your original extraction logic on the cleaned text.
         pattern = rf"<{tags}\b[^>]*>(.*?)</{tags}>"
 
-        match = re.search(pattern, raw_text)
+        # The re.DOTALL flag is MANDATORY here so (.*?) can cross line breaks
+        match = re.search(pattern, text_without_thoughts, re.DOTALL)
         if match:
-            return match.group(1)
+            # .strip() cleans up the extra newlines immediately inside the tags
+            return match.group(1).strip()
 
         return ""

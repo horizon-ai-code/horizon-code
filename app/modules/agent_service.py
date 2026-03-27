@@ -48,6 +48,7 @@ class AgentService:
         )
 
         self.current_model_path = path
+        self._current_n_gpu_layers = n_gpu_layers
         print(
             f"Model loaded successfully: {path} (Layers: {n_gpu_layers}, Context: {n_ctx})"
         )
@@ -57,6 +58,7 @@ class AgentService:
         Force-releases VRAM and synchronizes deallocation.
         """
         if self.model is not None:
+            self.model.close()
             del self.model
             self.model = None
             self.current_model_path = None
