@@ -7,7 +7,7 @@ from llama_cpp import ChatCompletionRequestMessage, CreateChatCompletionResponse
 from app.modules.agent_service import AgentService
 from app.modules.validator import Validator
 from app.modules.websocket_manager import WebSocketManager
-from app.utils.paths import MODELS_CONFIG_PATH, MODELS_DIR
+from app.utils.paths import MODELS_CONFIG_PATH
 
 
 class Orchestrator:
@@ -37,11 +37,7 @@ class Orchestrator:
             print(f"\n[Orchestrator] ── Iteration {iteration} ──────────────────────")
 
             print("[Planner]    Loading model...")
-            await self.agent_service.load(
-                path=str(MODELS_DIR / self.model_config["planner"]["filename"]),
-                n_gpu_layers=self.model_config["planner"]["layers"],
-                n_ctx=self.model_config["planner"]["context_size"],
-            )
+            await self.agent_service.load(self.model_config["planner"])
 
             print("[Planner]    Generating plan & instructions...")
             result = await self.generate_plan_and_instruction(
@@ -51,11 +47,7 @@ class Orchestrator:
             print("[Planner]    Done.")
 
             print("[Generator]  Swapping model...")
-            await self.agent_service.swap(
-                path=str(MODELS_DIR / self.model_config["generator"]["filename"]),
-                n_gpu_layers=self.model_config["generator"]["layers"],
-                n_ctx=self.model_config["generator"]["context_size"],
-            )
+            await self.agent_service.swap(self.model_config["generator"])
 
             print("[Generator]  Refactoring code...")
             refactored_code = await self.generate_refactored_code(
@@ -79,11 +71,7 @@ class Orchestrator:
             )
 
             print("[Judge]      Swapping model...")
-            await self.agent_service.swap(
-                path=str(MODELS_DIR / self.model_config["judge"]["filename"]),
-                n_gpu_layers=self.model_config["judge"]["layers"],
-                n_ctx=self.model_config["judge"]["context_size"],
-            )
+            await self.agent_service.swap(self.model_config["judge"])
 
             print("[Judge]      Interpreting errors & generating fix instructions...")
             judge_result = await self.interpret_errors_and_generate_instructions(
@@ -105,11 +93,7 @@ class Orchestrator:
         )
 
         print("[Judge]      Loading model for insights...")
-        await self.agent_service.swap(
-            path=str(MODELS_DIR / self.model_config["judge"]["filename"]),
-            n_gpu_layers=self.model_config["judge"]["layers"],
-            n_ctx=self.model_config["judge"]["context_size"],
-        )
+        await self.agent_service.swap(self.model_config["judge"])
 
         print("[Judge]      Generating insights...")
         insights = await self.generate_insights(

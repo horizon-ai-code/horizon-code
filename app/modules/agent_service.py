@@ -9,6 +9,8 @@ from llama_cpp.llama_types import (
     CreateChatCompletionStreamResponse,
 )
 
+from app.utils.paths import MODELS_DIR
+
 
 class AgentService:
     """
@@ -20,20 +22,18 @@ class AgentService:
         self.model: Optional[Llama] = None
         self.current_model_path: Optional[str] = None
 
-    async def load(
-        self,
-        path: str,
-        n_ctx: int,
-        n_gpu_layers: int = 50,
-    ) -> None:
+    async def load(self, config: dict) -> None:
         """
         Loads an SLM model with dynamic hardware constraints.
 
         Args:
-            path: Path to the .gguf file.
-            n_gpu_layers: Number of layers to offload to GPU.
-            n_ctx: Context window size.
+            config: Agent config dict from model_config.yaml, containing
+                    'filename', 'layers', and 'context_size' keys.
         """
+        path = str(MODELS_DIR / config["filename"])
+        n_gpu_layers = config["layers"]
+        n_ctx = config["context_size"]
+
         # Bypass I/O if the model is already in VRAM
         if self.current_model_path == path and self.model is not None:
             return
@@ -67,20 +67,20 @@ class AgentService:
             await asyncio.to_thread(gc.collect)
             await asyncio.sleep(0.5)
 
-    async def swap(
-        self,
-        path: str,
-        n_ctx: int,
-        n_gpu_layers: int = 50,
-    ) -> None:
+    async def swap(self, config: dict) -> None:
         """
         Swaps models, only triggering unload if a different model is requested.
+
+        Args:
+            config: Agent config dict from model_config.yaml, containing
+                    'filename', 'layers', and 'context_size' keys.
         """
+        path = str(MODELS_DIR / config["filename"])
         if self.current_model_path == path:
             return
 
         await self.unload()
-        await self.load(path=path, n_gpu_layers=n_gpu_layers, n_ctx=n_ctx)
+        await self.load(config)
 
     @overload
     async def generate(
