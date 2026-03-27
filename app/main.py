@@ -42,11 +42,9 @@ async def entrypoint(websocket: WebSocket) -> None:
 
     try:
         while True:
-            data: dict = await websocket.receive_json()
-            validated: Optional[RefactorRequest] = await validate_request(
-                websocket=websocket, data=data
+            validated: Optional[RefactorRequest] = await get_validated_data(
+                websocket=websocket
             )
-
             if not validated:
                 continue
 
@@ -64,13 +62,36 @@ async def entrypoint(websocket: WebSocket) -> None:
         await agent_service.unload()
 
 
-async def validate_request(
-    websocket: WebSocket, data: dict
-) -> Optional[RefactorRequest]:
+async def get_validated_data(websocket: WebSocket) -> Optional[RefactorRequest]:
+    """
+    Handles raw reception, JSON decoding, and Pydantic validation.
+    Returns None if any step fails, keeping the connection alive.
+    """
     try:
+        # Step 1: Try to receive and decode raw JSON
+        # This prevents crashes from empty or malformed strings (Postman errors)
+        data = await websocket.receive_json()
+
+        # Step 2: Try to validate against the Pydantic model
         return RefactorRequest(**data)
+
+    except WebSocketDisconnect:
+        # We RE-RAISE this so the outer 'entrypoint'
+        # catch block knows to stop the loop.
+        raise
+
     except ValidationError as e:
         await websocket.send_json(
-            {"type": "error", "message": "Invalid Data Format", "details": e.errors()}
+            {"type": "error", "message": "Invalid data format", "details": e.errors()}
         )
-        return None
+
+    except (json.JSONDecodeError, TypeError, ValueError) as e:
+        await websocket.send_json(
+            {"type": "error", "message": "Malformed JSON payload", "details": str(e)}
+        )
+
+    except Exception as e:
+        # Catch-all for unexpected message issues
+        print(f"Non-fatal message error: {e}")
+
+    return None
