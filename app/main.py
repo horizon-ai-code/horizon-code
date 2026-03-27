@@ -8,7 +8,7 @@ from pydantic import ValidationError
 from app.modules.agent_service import AgentService
 from app.modules.orchestrator import Orchestrator
 from app.modules.validator import Validator
-from app.modules.websocket_manager import WebSocketManager
+from app.modules.websocket_manager import ClientConnection
 from app.utils.types import RefactorRequest
 
 app: FastAPI = FastAPI()
@@ -28,17 +28,16 @@ app.add_middleware(
 
 agent_service: AgentService = AgentService()
 validator: Validator = Validator()
-websocket_manager: WebSocketManager = WebSocketManager()
 orchestrator: Orchestrator = Orchestrator(
-    agent_service=agent_service,
-    validator=validator,
-    websocket_manager=websocket_manager,
+    agent_service=agent_service, validator=validator
 )
 
 
 @app.websocket("/ws")
 async def entrypoint(websocket: WebSocket) -> None:
     await websocket.accept()
+
+    connection: ClientConnection = ClientConnection(websocket=websocket)
 
     try:
         while True:
@@ -49,7 +48,7 @@ async def entrypoint(websocket: WebSocket) -> None:
                 continue
 
             await orchestrator.execute_orchestration(
-                websocket=websocket,
+                client=connection,
                 user_code=validated.code,
                 user_instruction=validated.user_instruction,
             )
@@ -76,8 +75,6 @@ async def get_validated_data(websocket: WebSocket) -> Optional[RefactorRequest]:
         return RefactorRequest(**data)
 
     except WebSocketDisconnect:
-        # We RE-RAISE this so the outer 'entrypoint'
-        # catch block knows to stop the loop.
         raise
 
     except ValidationError as e:

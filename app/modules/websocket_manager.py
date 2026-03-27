@@ -1,22 +1,28 @@
 from fastapi import WebSocket
 
+from app.utils.types import Role
 
-class WebSocketManager:
+
+class ClientConnection:
     """
     Manages active WebSocket connections for real-time communication.
     """
 
-    async def send_message(
-        self,
-        websocket: WebSocket,
-        content: dict,
-    ) -> None:
-        """
-        Sends a text message through an active WebSocket connection.
+    def __init__(self, websocket: WebSocket):
+        self.websocket = websocket
 
-        Args:
-            websocket: The WebSocket instance to send the message through.
-            content: The dictionary content of the message.
-        """
+    async def send_status(self, role: Role, content: str) -> None:
 
-        await websocket.send_json(content)
+        message: dict = {"type": "status", "role": role, "content": content}
+
+        await self.websocket.send_json(message)
+
+    async def send_result(self, final_code: str, insights: str, complexity: int):
+        message: dict = {
+            "type": "result",
+            "code": final_code,
+            "complexity": complexity,
+            "insights": insights,
+        }
+
+        await self.websocket.send_json(message)
