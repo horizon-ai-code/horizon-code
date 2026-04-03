@@ -55,7 +55,7 @@ class ConnectionManager:
         # The database is initialized here and hidden from the rest of the app
         self.db = DatabaseManager()
 
-    def get_rest_history(self) -> list[dict]:
+    async def get_rest_history(self) -> list[dict]:
         """
         Delegates the history fetching for the HTTP GET endpoint.
         """

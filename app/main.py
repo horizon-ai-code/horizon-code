@@ -3,7 +3,6 @@ from typing import Optional
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from playhouse.db_url import connect
 from pydantic import ValidationError
 
 from app.modules.agent_service import AgentService
