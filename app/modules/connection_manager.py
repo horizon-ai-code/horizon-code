@@ -31,19 +31,16 @@ class ClientConnection:
         self,
         final_code: str,
         insights: str,
-        complexity: int,
-        original_code: str,
-        user_instruction: str,
+        complexity: Optional[int],
     ):
-        # 1. Save to the SQLite database using Peewee
-        self.db.save_history(
+        # 1. Update the existing session record with final results
+        self.db.complete_session(
             id=self.id,
-            instruction=user_instruction,
-            original=original_code,
-            refactored=final_code,
+            refactored_code=final_code,
             insights=insights,
             complexity=complexity,
         )
+
 
         # 2. Send the final result payload to the frontend
         message: dict = {

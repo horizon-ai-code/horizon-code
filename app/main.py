@@ -30,8 +30,9 @@ agent_service: AgentService = AgentService()
 validator: Validator = Validator()
 connection: ConnectionManager = ConnectionManager()
 orchestrator: Orchestrator = Orchestrator(
-    agent_service=agent_service, validator=validator
+    agent_service=agent_service, validator=validator, db=connection.db
 )
+
 
 
 @app.websocket("/ws")

@@ -317,7 +317,7 @@ curl http://localhost:8000/api/history
 
 ### `GET /api/history/{history_id}`
 
-Retrieves the full details of a specific refactoring session by its unique ID.
+Retrieves the full details of a specific refactoring session by its unique ID, including all intermediate orchestration logs.
 
 **Endpoint:** `GET http://localhost:8000/api/history/{history_id}`
 
@@ -334,10 +334,19 @@ Retrieves the full details of a specific refactoring session by its unique ID.
   "id": "<string>",                 // Unique history record UUID
   "user_instruction": "<string>",   // The user's refactoring instruction
   "original_code": "<string>",      // The original Java code
-  "refactored_code": "<string>",    // The refactored Java code
-  "insights": "<string>",          // The generated insights
+  "refactored_code": "<string>",    // The refactored Java code (null if in-progress)
+  "insights": "<string>",          // The generated insights (null if in-progress)
   "complexity": <integer | null>,  // Cyclomatic complexity score
-  "created_at": "<timestamp>"      // When the refactoring was completed (ISO 8601)
+  "created_at": "<timestamp>",     // When the session started (ISO 8601)
+  "logs": [                        // Array of orchestration steps
+    {
+       "id": <integer>,
+       "role": "<Role>",
+       "status": "<string>",       // Human-readable status message
+       "content": "<string | null>", // The actual generated data (plan, code, etc.)
+       "created_at": "<timestamp>"
+    }
+  ]
 }
 ```
 
@@ -356,14 +365,24 @@ curl http://localhost:8000/api/history/550e8400-e29b-41d4-a716-446655440000
 ```json
 {
     "id": "550e8400-e29b-41d4-a716-446655440000",
-    "user_instruction": "Rename the class to Baz and extract the print into a separate method.",
-    "original_code": "public class Foo {\n  public void bar() {\n    System.out.println(\"Hello\");\n  }\n}",
-    "refactored_code": "public class Baz {\n  public void bar() {\n    printHello();\n  }\n  private void printHello() {\n    System.out.println(\"Hello\");\n  }\n}",
-    "insights": "The refactoring successfully renamed the class from Foo to Baz and extracted the print logic into a dedicated method for better separation of concerns.",
+    "user_instruction": "Rename class to Baz.",
+    "original_code": "public class Foo {}",
+    "refactored_code": "public class Baz {}",
+    "insights": "Renamed class successfuly.",
     "complexity": 1,
-    "created_at": "2026-04-03T10:30:45Z"
+    "created_at": "2026-04-03T22:30:45Z",
+    "logs": [
+        {
+            "id": 1,
+            "role": "Planner",
+            "status": "Generating plan...",
+            "content": "Rename class to Baz",
+            "created_at": "2026-04-03T22:30:46Z"
+        }
+    ]
 }
 ```
+
 
 ## Enums & Constants
 
@@ -386,6 +405,11 @@ Identifies which agent is active. Used in `status` messages.
 | `"status"`         | Server → Client | Progress update from an agent.    |
 | `"result"`         | Server → Client | Final refactored code + insights. |
 | `"error"`          | Server → Client | Validation/parse error response.  |
+
+---
+
+- [GET /api/history](#get-apihistory) — List of all session IDs.
+- [GET /api/history/{history_id}](#get-apihistoryhistory_id) — Full session details with **bundled orchestration logs**.
 
 ---
 
@@ -414,7 +438,7 @@ interface ConnectionIdMessage {
 ```typescript
 interface StatusMessage {
     type: "status";
-    role: "Planner" | "Generator" | "Judge" | "Validator";
+    role: Role;
     content: string;
 }
 ```
@@ -429,6 +453,31 @@ interface ResultMessage {
     complexity: number | null;
     insights: string;
 }
+```
+
+### History Detail (Server → Client)
+
+```typescript
+interface RefactorHistoryDetail {
+    id: string;
+    user_instruction: string;
+    original_code: string;
+    refactored_code: string | null;
+    insights: string | null;
+    complexity: number | null;
+    created_at: string; // ISO 8601
+    logs: OrchestrationLog[]; // Bundled logs
+}
+
+interface OrchestrationLog {
+    id: number;
+    session: string; // The parent session UUID (string)
+    role: Role;
+    status: string;
+    content: string | null;
+    created_at: string; // ISO 8601
+}
+
 ```
 
 ### Error Message (Server → Client)
@@ -503,3 +552,4 @@ ws.onmessage = (event) => {
     }
 };
 ```
+

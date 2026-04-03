@@ -1,5 +1,5 @@
 planner:
-  temperature: 0.5
+  temperature: 0.1
   max_tokens: 4096
   context_size: 6144
   layers: 28
