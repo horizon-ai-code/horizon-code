@@ -67,7 +67,7 @@ async def entrypoint(websocket: WebSocket) -> None:
 
 @app.get("/api/history")
 async def get_history():
-    return connection.get_rest_history()
+    return await connection.get_rest_history()
 
 
 async def get_validated_data(websocket: WebSocket) -> Optional[RefactorRequest]:

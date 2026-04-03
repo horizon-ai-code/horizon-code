@@ -1,27 +1,33 @@
 # Horizon Code — Frontend API Documentation
 
-> **Base URL:** `ws://localhost:8000/ws`
->
-> The backend exposes a single **WebSocket** endpoint. All communication happens over this persistent connection — there are no REST endpoints.
+The backend exposes:
+
+- A **WebSocket** endpoint for real-time refactoring (`ws://localhost:8000/ws`)
+- A **REST** endpoint for fetching refactoring history (`GET /api/history`)
 
 ---
 
 ## Table of Contents
 
-- [Connection](#connection)
-- [Client → Server Messages](#client--server-messages)
-  - [RefactorRequest](#refactorrequest)
-- [Server → Client Messages](#server--client-messages)
-  - [Status Update](#status-update)
-  - [Result](#result)
-  - [Error](#error)
-- [Orchestration Flow](#orchestration-flow)
+- [WebSocket API](#websocket-api)
+    - [Connection](#connection)
+    - [Client → Server Messages](#client--server-messages)
+        - [RefactorRequest](#refactorrequest)
+    - [Server → Client Messages](#server--client-messages)
+        - [Status Update](#status-update)
+        - [Result](#result)
+        - [Error](#error)
+    - [Orchestration Flow](#orchestration-flow)
+- [REST API](#rest-api)
+    - [GET /api/history](#get-apihistory)
 - [Enums & Constants](#enums--constants)
 - [Data Structures Reference](#data-structures-reference)
 
 ---
 
-## Connection
+## WebSocket API
+
+### Connection
 
 1. Open a WebSocket connection to `ws://<host>:8000/ws`.
 2. The server accepts the connection immediately — no authentication or handshake payload is required.
@@ -32,10 +38,10 @@
 
 The following origins are allowed:
 
-| Origin                   |
-| ------------------------ |
-| `http://localhost:3000`   |
-| `http://127.0.0.1:3000`  |
+| Origin                  |
+| ----------------------- |
+| `http://localhost:3000` |
+| `http://127.0.0.1:3000` |
 
 ---
 
@@ -47,15 +53,15 @@ Every message the client sends **must** be a JSON object with this exact shape:
 
 ```jsonc
 {
-  "code": "<string>",              // The Java source code to refactor
-  "user_instruction": "<string>"   // Natural-language instruction describing the desired changes
+    "code": "<string>", // The Java source code to refactor
+    "user_instruction": "<string>", // Natural-language instruction describing the desired changes
 }
 ```
 
-| Field              | Type     | Required | Description                                              |
-| ------------------ | -------- | -------- | -------------------------------------------------------- |
-| `code`             | `string` | ✅        | The raw Java code snippet the user wants to refactor.    |
-| `user_instruction` | `string` | ✅        | A natural-language description of the desired refactoring.|
+| Field              | Type     | Required | Description                                                |
+| ------------------ | -------- | -------- | ---------------------------------------------------------- |
+| `code`             | `string` | ✅       | The raw Java code snippet the user wants to refactor.      |
+| `user_instruction` | `string` | ✅       | A natural-language description of the desired refactoring. |
 
 > **Both fields are required.** If either is missing or the payload is not valid JSON, the server responds with an [Error](#error) message.
 
@@ -63,8 +69,8 @@ Every message the client sends **must** be a JSON object with this exact shape:
 
 ```json
 {
-  "code": "public class Foo {\n  public void bar() {\n    System.out.println(\"Hello\");\n  }\n}",
-  "user_instruction": "Rename the class to Baz and extract the print into a separate method."
+    "code": "public class Foo {\n  public void bar() {\n    System.out.println(\"Hello\");\n  }\n}",
+    "user_instruction": "Rename the class to Baz and extract the print into a separate method."
 }
 ```
 
@@ -82,35 +88,35 @@ Sent **multiple times** during orchestration to report progress from each agent.
 
 ```jsonc
 {
-  "type": "status",
-  "role": "<Role>",      // Which agent is reporting — see Role enum below
-  "content": "<string>"  // Human-readable status message
+    "type": "status",
+    "role": "<Role>", // Which agent is reporting — see Role enum below
+    "content": "<string>", // Human-readable status message
 }
 ```
 
-| Field     | Type     | Description                                                                 |
-| --------- | -------- | --------------------------------------------------------------------------- |
-| `type`    | `string` | Always `"status"`.                                                          |
+| Field     | Type     | Description                                                                               |
+| --------- | -------- | ----------------------------------------------------------------------------------------- |
+| `type`    | `string` | Always `"status"`.                                                                        |
 | `role`    | `Role`   | The agent currently active. One of: `"Planner"`, `"Generator"`, `"Judge"`, `"Validator"`. |
-| `content` | `string` | A short, human-readable progress description.                               |
+| `content` | `string` | A short, human-readable progress description.                                             |
 
 #### Status messages you can expect (in typical order)
 
-| #  | `role`        | `content` (typical)                                        |
-| -- | ------------- | ---------------------------------------------------------- |
-| 1  | `Planner`     | `"Generating plan & instructions..."`                      |
-| 2  | `Planner`     | _The generated plan text_                                  |
-| 3  | `Generator`   | `"Refactoring code..."`                                    |
-| 4  | `Generator`   | `"Refactor draft finished."`                               |
-| 5  | `Validator`   | `"Checking syntax..."`                                     |
-| 6a | `Validator`   | `"Syntax passed."` _(happy path — skip to step 9)_        |
-| 6b | `Validator`   | `"Errors detected."` _(enters fix loop)_                   |
-| 7  | `Judge`       | `"Interpreting errors & generating fix instructions..."`   |
-| 8  | `Judge`       | _The error interpretation text_                            |
-|    |               | _(loops back to step 1 with corrected instructions)_       |
-| 9  | `Validator`   | `"Checking complexity..."`                                 |
-| 10 | `Validator`   | `"Complexity measured."`                                   |
-| 11 | `Judge`       | `"Generating insights..."`                                 |
+| #   | `role`      | `content` (typical)                                      |
+| --- | ----------- | -------------------------------------------------------- |
+| 1   | `Planner`   | `"Generating plan & instructions..."`                    |
+| 2   | `Planner`   | _The generated plan text_                                |
+| 3   | `Generator` | `"Refactoring code..."`                                  |
+| 4   | `Generator` | `"Refactor draft finished."`                             |
+| 5   | `Validator` | `"Checking syntax..."`                                   |
+| 6a  | `Validator` | `"Syntax passed."` _(happy path — skip to step 9)_       |
+| 6b  | `Validator` | `"Errors detected."` _(enters fix loop)_                 |
+| 7   | `Judge`     | `"Interpreting errors & generating fix instructions..."` |
+| 8   | `Judge`     | _The error interpretation text_                          |
+|     |             | _(loops back to step 1 with corrected instructions)_     |
+| 9   | `Validator` | `"Checking complexity..."`                               |
+| 10  | `Validator` | `"Complexity measured."`                                 |
+| 11  | `Judge`     | `"Generating insights..."`                               |
 
 > After step 11, the next message will be a [`result`](#result).
 
@@ -124,37 +130,26 @@ Sent **once** at the end of a successful orchestration cycle.
 {
   "type": "result",
   "code": "<string>",          // The final refactored Java code
-  "complexity": {              // Complexity analysis of the final code
-    "complexity_score": <int | null>,
-    "structure_tier": "<string>",
-    "is_fallback": <bool | null>
-  },
-  "insights": "<string>"      // AI-generated analysis of the refactoring
+  "complexity": <int | null>,  // Cyclomatic complexity score, or null if empty
+  "insights": "<string>"       // AI-generated analysis of the refactoring
 }
 ```
 
-| Field                          | Type           | Description                                                                                        |
-| ------------------------------ | -------------- | -------------------------------------------------------------------------------------------------- |
-| `type`                         | `string`       | Always `"result"`.                                                                                 |
-| `code`                         | `string`       | The final, syntax-validated, refactored Java code.                                                 |
-| `complexity`                   | `object`       | Complexity analysis result (see below).                                                            |
-| `complexity.complexity_score`  | `int \| null`  | Cyclomatic complexity score. `null` if the snippet was empty.                                      |
-| `complexity.structure_tier`    | `string`       | Detected structure tier — see [Structure Tiers](#structure-tiers).                                 |
-| `complexity.is_fallback`       | `bool \| null` | `true` if no functions were detected and complexity defaults to `1`. `null` if snippet was empty.  |
-| `insights`                     | `string`       | A detailed AI-generated analysis comparing the original and refactored code.                       |
+| Field        | Type          | Description                                                                          |
+| ------------ | ------------- | ------------------------------------------------------------------------------------ |
+| `type`       | `string`      | Always `"result"`.                                                                   |
+| `code`       | `string`      | The final, syntax-validated, refactored Java code.                                   |
+| `complexity` | `int \| null` | Cyclomatic complexity score of the refactored code. `null` if the snippet was empty. |
+| `insights`   | `string`      | A detailed AI-generated analysis comparing the original and refactored code.         |
 
 #### Example
 
 ```json
 {
-  "type": "result",
-  "code": "public class Baz {\n  public void bar() {\n    printHello();\n  }\n  private void printHello() {\n    System.out.println(\"Hello\");\n  }\n}",
-  "complexity": {
-    "complexity_score": 1,
-    "structure_tier": "Compilation Unit (Full Class)",
-    "is_fallback": false
-  },
-  "insights": "The refactoring successfully extracted the print logic into a dedicated method..."
+    "type": "result",
+    "code": "public class Baz {\n  public void bar() {\n    printHello();\n  }\n  private void printHello() {\n    System.out.println(\"Hello\");\n  }\n}",
+    "complexity": 1,
+    "insights": "The refactoring successfully extracted the print logic into a dedicated method..."
 }
 ```
 
@@ -168,16 +163,17 @@ Sent when the client sends invalid data. The connection **stays open** — the c
 
 ```jsonc
 {
-  "type": "error",
-  "message": "Invalid data format",
-  "details": [                          // Pydantic validation error list
-    {
-      "type": "<string>",
-      "loc": ["<field_name>"],
-      "msg": "<string>",
-      "input": "<value>"
-    }
-  ]
+    "type": "error",
+    "message": "Invalid data format",
+    "details": [
+        // Pydantic validation error list
+        {
+            "type": "<string>",
+            "loc": ["<field_name>"],
+            "msg": "<string>",
+            "input": "<value>",
+        },
+    ],
 }
 ```
 
@@ -185,17 +181,17 @@ Sent when the client sends invalid data. The connection **stays open** — the c
 
 ```jsonc
 {
-  "type": "error",
-  "message": "Malformed JSON payload",
-  "details": "<string>"                 // Description of the JSON parsing error
+    "type": "error",
+    "message": "Malformed JSON payload",
+    "details": "<string>", // Description of the JSON parsing error
 }
 ```
 
-| Field     | Type               | Description                                                      |
-| --------- | ------------------ | ---------------------------------------------------------------- |
-| `type`    | `string`           | Always `"error"`.                                                |
-| `message` | `string`           | Either `"Invalid data format"` or `"Malformed JSON payload"`.    |
-| `details` | `array \| string`  | Pydantic error array (validation) or error string (malformed).   |
+| Field     | Type              | Description                                                    |
+| --------- | ----------------- | -------------------------------------------------------------- |
+| `type`    | `string`          | Always `"error"`.                                              |
+| `message` | `string`          | Either `"Invalid data format"` or `"Malformed JSON payload"`.  |
+| `details` | `array \| string` | Pydantic error array (validation) or error string (malformed). |
 
 ---
 
@@ -250,37 +246,87 @@ Client sends RefactorRequest
 
 ---
 
+## REST API
+
+### `GET /api/history`
+
+Retrieves the complete history of all refactoring requests and results that have been processed by the server.
+
+**Endpoint:** `GET http://localhost:8000/api/history`
+
+**Query Parameters:** None
+
+**Response:** HTTP 200 OK
+
+```jsonc
+[
+  {
+    "id": <integer>,                   // Unique history record ID
+    "instruction": "<string>",         // The user's refactoring instruction
+    "original": "<string>",            // The original Java code
+    "refactored": "<string>",          // The refactored Java code
+    "insights": "<string>",            // The generated insights
+    "complexity": <integer | null>,    // Cyclomatic complexity score
+    "created_at": "<timestamp>"        // When the refactoring was completed (ISO 8601)
+  },
+  // ... more records
+]
+```
+
+| Field         | Type              | Description                                                         |
+| ------------- | ----------------- | ------------------------------------------------------------------- |
+| `id`          | `integer`         | Unique identifier for the history record.                           |
+| `instruction` | `string`          | The natural-language instruction the user provided.                 |
+| `original`    | `string`          | The raw Java code before refactoring.                               |
+| `refactored`  | `string`          | The final refactored Java code.                                     |
+| `insights`    | `string`          | AI-generated analysis of the refactoring changes.                   |
+| `complexity`  | `integer \| null` | Cyclomatic complexity score of the refactored code (null if empty). |
+| `created_at`  | `string`          | ISO 8601 timestamp of when the refactoring was completed.           |
+
+#### Example Request
+
+```bash
+curl http://localhost:8000/api/history
+```
+
+#### Example Response
+
+```json
+[
+    {
+        "id": 1,
+        "instruction": "Rename the class to Baz and extract the print into a separate method.",
+        "original": "public class Foo {\n  public void bar() {\n    System.out.println(\"Hello\");\n  }\n}",
+        "refactored": "public class Baz {\n  public void bar() {\n    printHello();\n  }\n  private void printHello() {\n    System.out.println(\"Hello\");\n  }\n}",
+        "insights": "The refactoring successfully renamed the class from Foo to Baz and extracted the print logic into a dedicated method for better separation of concerns.",
+        "complexity": 1,
+        "created_at": "2026-04-03T10:30:45Z"
+    }
+]
+```
+
+---
+
 ## Enums & Constants
 
 ### `Role`
 
 Identifies which agent is active. Used in `status` messages.
 
-| Value         | Description                                          |
-| ------------- | ---------------------------------------------------- |
-| `"Planner"`   | Analyzes code and generates a refactoring plan.       |
-| `"Generator"` | Writes the refactored code from instructions.         |
-| `"Judge"`     | Interprets errors or generates post-refactor insights.|
-| `"Validator"` | Validates syntax and measures complexity.             |
+| Value         | Description                                            |
+| ------------- | ------------------------------------------------------ |
+| `"Planner"`   | Analyzes code and generates a refactoring plan.        |
+| `"Generator"` | Writes the refactored code from instructions.          |
+| `"Judge"`     | Interprets errors or generates post-refactor insights. |
+| `"Validator"` | Validates syntax and measures complexity.              |
 
 ### `Message Types`
 
-| `type` value | Direction         | Description                          |
-| ------------ | ----------------- | ------------------------------------ |
-| `"status"`   | Server → Client   | Progress update from an agent.       |
-| `"result"`   | Server → Client   | Final refactored code + insights.    |
-| `"error"`    | Server → Client   | Validation/parse error response.     |
-
-### Structure Tiers
-
-Returned in the `complexity.structure_tier` field. Indicates how the validator classified the code snippet:
-
-| Tier | Label                              | Description                                      |
-| ---- | ---------------------------------- | ------------------------------------------------ |
-| 0    | `"Compilation Unit (Full Class)"`  | The snippet is a complete Java compilation unit.  |
-| 1    | `"Class Members (Method/Field)"`   | Methods or fields, but not a full class.          |
-| 2    | `"Statements/Block"`               | Individual statements or a code block.            |
-| -1   | `"Unknown / Empty"`                | Empty or unrecognizable snippet.                  |
+| `type` value | Direction       | Description                       |
+| ------------ | --------------- | --------------------------------- |
+| `"status"`   | Server → Client | Progress update from an agent.    |
+| `"result"`   | Server → Client | Final refactored code + insights. |
+| `"error"`    | Server → Client | Validation/parse error response.  |
 
 ---
 
@@ -290,8 +336,8 @@ Returned in the `complexity.structure_tier` field. Indicates how the validator c
 
 ```typescript
 interface RefactorRequest {
-  code: string;
-  user_instruction: string;
+    code: string;
+    user_instruction: string;
 }
 ```
 
@@ -299,9 +345,9 @@ interface RefactorRequest {
 
 ```typescript
 interface StatusMessage {
-  type: "status";
-  role: "Planner" | "Generator" | "Judge" | "Validator";
-  content: string;
+    type: "status";
+    role: "Planner" | "Generator" | "Judge" | "Validator";
+    content: string;
 }
 ```
 
@@ -309,16 +355,10 @@ interface StatusMessage {
 
 ```typescript
 interface ResultMessage {
-  type: "result";
-  code: string;
-  complexity: ComplexityResult;
-  insights: string;
-}
-
-interface ComplexityResult {
-  complexity_score: number | null;
-  structure_tier: string;
-  is_fallback: boolean | null;
+    type: "result";
+    code: string;
+    complexity: number | null;
+    insights: string;
 }
 ```
 
@@ -327,23 +367,23 @@ interface ComplexityResult {
 ```typescript
 // Validation error (wrong/missing fields)
 interface ValidationErrorMessage {
-  type: "error";
-  message: "Invalid data format";
-  details: PydanticError[];
+    type: "error";
+    message: "Invalid data format";
+    details: PydanticError[];
 }
 
 interface PydanticError {
-  type: string;
-  loc: string[];
-  msg: string;
-  input: any;
+    type: string;
+    loc: string[];
+    msg: string;
+    input: any;
 }
 
 // Malformed JSON
 interface MalformedJsonErrorMessage {
-  type: "error";
-  message: "Malformed JSON payload";
-  details: string;
+    type: "error";
+    message: "Malformed JSON payload";
+    details: string;
 }
 
 // Union type for all error messages
@@ -364,27 +404,29 @@ type ServerMessage = StatusMessage | ResultMessage | ErrorMessage;
 const ws = new WebSocket("ws://localhost:8000/ws");
 
 ws.onopen = () => {
-  ws.send(JSON.stringify({
-    code: 'public class Foo { public void bar() { System.out.println("Hello"); } }',
-    user_instruction: "Rename the class to Baz"
-  }));
+    ws.send(
+        JSON.stringify({
+            code: 'public class Foo { public void bar() { System.out.println("Hello"); } }',
+            user_instruction: "Rename the class to Baz",
+        }),
+    );
 };
 
 ws.onmessage = (event) => {
-  const msg = JSON.parse(event.data);
+    const msg = JSON.parse(event.data);
 
-  switch (msg.type) {
-    case "status":
-      console.log(`[${msg.role}] ${msg.content}`);
-      break;
-    case "result":
-      console.log("Refactored code:", msg.code);
-      console.log("Complexity:", msg.complexity);
-      console.log("Insights:", msg.insights);
-      break;
-    case "error":
-      console.error("Error:", msg.message, msg.details);
-      break;
-  }
+    switch (msg.type) {
+        case "status":
+            console.log(`[${msg.role}] ${msg.content}`);
+            break;
+        case "result":
+            console.log("Refactored code:", msg.code);
+            console.log("Complexity score:", msg.complexity);
+            console.log("Insights:", msg.insights);
+            break;
+        case "error":
+            console.error("Error:", msg.message, msg.details);
+            break;
+    }
 };
 ```
