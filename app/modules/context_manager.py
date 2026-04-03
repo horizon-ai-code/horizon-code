@@ -1,5 +1,5 @@
 import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import peewee
 from playhouse.shortcuts import model_to_dict
@@ -16,6 +16,7 @@ db = peewee.SqliteDatabase(DB_PATH, pragmas={"journal_mode": "wal"})
 
 # 2. Define the Database Schema
 class RefactorHistory(peewee.Model):
+    id = peewee.UUIDField()
     user_instruction = peewee.TextField()
     original_code = peewee.TextField()
     refactored_code = peewee.TextField()
@@ -40,6 +41,7 @@ class DatabaseManager:
 
     def save_history(
         self,
+        id: str,
         instruction: str,
         original: str,
         refactored: str,
@@ -53,6 +55,7 @@ class DatabaseManager:
         """
         with db.atomic():
             RefactorHistory.create(
+                id=id,
                 user_instruction=instruction,
                 original_code=original,
                 refactored_code=refactored,
@@ -60,12 +63,21 @@ class DatabaseManager:
                 complexity=complexity,
             )
 
-    def get_history(self) -> List[Dict[str, Any]]:
+    def get_history(self) -> List[str]:
         """
-        Fetches all history for a specific session ID and converts it to dictionaries
-        so FastAPI can instantly serialize it to JSON.
+        Fetches all record IDs from the refactor history.
         """
-        query = RefactorHistory.select()
+        query = RefactorHistory.select(RefactorHistory.id)
+        return [str(record.id) for record in query]
 
-        # model_to_dict automatically strips Peewee metadata and returns raw Python dicts
-        return [model_to_dict(record) for record in query]
+
+    def get_history_by_id(self, id: str) -> Optional[Dict[str, Any]]:
+        """
+        Fetches a single history record by its UUID.
+        Returns a dictionary or None if not found.
+        """
+        try:
+            record = RefactorHistory.get(RefactorHistory.id == id)
+            return model_to_dict(record)
+        except RefactorHistory.DoesNotExist:
+            return None

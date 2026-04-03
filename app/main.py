@@ -1,7 +1,7 @@
 import json
 from typing import Optional
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import ValidationError
 
@@ -50,6 +50,8 @@ async def entrypoint(websocket: WebSocket) -> None:
             if not validated:
                 continue
 
+            await client_conn.send_connection_id()
+
             await orchestrator.execute_orchestration(
                 client=client_conn,
                 user_code=validated.code,
@@ -67,6 +69,14 @@ async def entrypoint(websocket: WebSocket) -> None:
 @app.get("/api/history")
 async def get_history():
     return await connection.get_rest_history()
+
+
+@app.get("/api/history/{history_id}")
+async def get_history_detail(history_id: str):
+    record = await connection.get_history_by_id(history_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="Refactor history not found")
+    return record
 
 
 async def get_validated_data(websocket: WebSocket) -> Optional[RefactorRequest]:

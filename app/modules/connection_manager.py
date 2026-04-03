@@ -1,3 +1,6 @@
+import uuid
+from typing import Optional
+
 from fastapi import WebSocket
 
 from app.modules.context_manager import DatabaseManager
@@ -13,6 +16,12 @@ class ClientConnection:
     def __init__(self, websocket: WebSocket, db: DatabaseManager):
         self.websocket = websocket
         self.db = db
+        self.id = str(uuid.uuid4())
+
+    async def send_connection_id(self) -> None:
+        """Sends the unique session ID to the frontend upon connection."""
+        message: dict = {"type": "connection_id", "id": self.id}
+        await self.websocket.send_json(message)
 
     async def send_status(self, role: Role, content: str) -> None:
         message: dict = {"type": "status", "role": role, "content": content}
@@ -28,6 +37,7 @@ class ClientConnection:
     ):
         # 1. Save to the SQLite database using Peewee
         self.db.save_history(
+            id=self.id,
             instruction=user_instruction,
             original=original_code,
             refactored=final_code,
@@ -38,6 +48,7 @@ class ClientConnection:
         # 2. Send the final result payload to the frontend
         message: dict = {
             "type": "result",
+            "id": self.id,
             "code": final_code,
             "complexity": complexity,
             "insights": insights,
@@ -55,11 +66,17 @@ class ConnectionManager:
         # The database is initialized here and hidden from the rest of the app
         self.db = DatabaseManager()
 
-    async def get_rest_history(self) -> list[dict]:
+    async def get_rest_history(self):
         """
         Delegates the history fetching for the HTTP GET endpoint.
         """
         return self.db.get_history()
+
+    async def get_history_by_id(self, id: str) -> Optional[dict]:
+        """
+        Delegates single history fetching.
+        """
+        return self.db.get_history_by_id(id)
 
     def create_websocket_connection(self, websocket: WebSocket) -> ClientConnection:
         """

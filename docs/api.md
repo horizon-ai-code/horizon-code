@@ -4,6 +4,7 @@ The backend exposes:
 
 - A **WebSocket** endpoint for real-time refactoring (`ws://localhost:8000/ws`)
 - A **REST** endpoint for fetching refactoring history (`GET /api/history`)
+- A **REST** endpoint for fetching details of a specific refactoring (`GET /api/history/{history_id}`)
 
 ---
 
@@ -20,6 +21,7 @@ The backend exposes:
     - [Orchestration Flow](#orchestration-flow)
 - [REST API](#rest-api)
     - [GET /api/history](#get-apihistory)
+    - [GET /api/history/{history_id}](#get-apihistoryhistory_id)
 - [Enums & Constants](#enums--constants)
 - [Data Structures Reference](#data-structures-reference)
 
@@ -78,7 +80,29 @@ Every message the client sends **must** be a JSON object with this exact shape:
 
 ## Server → Client Messages
 
-The server sends three types of messages, distinguished by the `"type"` field.
+The server sends four types of messages, distinguished by the `"type"` field.
+1. [`connection_id`](#connection_id) — Sent when the server receives a new orchestration request.
+2. [`status`](#status-update) — Sent multiple times during the process.
+3. [`result`](#result) — Sent once at the end.
+4. [`error`](#error) — Sent if the client's payload is invalid.
+
+---
+
+### connection_id
+
+Sent **once** right after the server validates a new `RefactorRequest` and before orchestration begins. This ID identifies the current session and is used for history tracking.
+
+```jsonc
+{
+    "type": "connection_id",
+    "id": "<string>" // A unique UUID for the current connection
+}
+```
+
+| Field  | Type     | Description                                      |
+| ------ | -------- | ------------------------------------------------ |
+| `type` | `string` | Always `"connection_id"`.                        |
+| `id`   | `string` | The unique session identifier (UUID v4 string). |
 
 ---
 
@@ -129,6 +153,7 @@ Sent **once** at the end of a successful orchestration cycle.
 ```jsonc
 {
   "type": "result",
+  "id": "<string>",          // The unique session ID for this result
   "code": "<string>",          // The final refactored Java code
   "complexity": <int | null>,  // Cyclomatic complexity score, or null if empty
   "insights": "<string>"       // AI-generated analysis of the refactoring
@@ -138,6 +163,7 @@ Sent **once** at the end of a successful orchestration cycle.
 | Field        | Type          | Description                                                                          |
 | ------------ | ------------- | ------------------------------------------------------------------------------------ |
 | `type`       | `string`      | Always `"result"`.                                                                   |
+| `id`         | `string`      | The unique session identifier (UUID v4 string).                                     |
 | `code`       | `string`      | The final, syntax-validated, refactored Java code.                                   |
 | `complexity` | `int \| null` | Cyclomatic complexity score of the refactored code. `null` if the snippet was empty. |
 | `insights`   | `string`      | A detailed AI-generated analysis comparing the original and refactored code.         |
@@ -147,6 +173,7 @@ Sent **once** at the end of a successful orchestration cycle.
 ```json
 {
     "type": "result",
+    "id": "550e8400-e29b-41d4-a716-446655440000",
     "code": "public class Baz {\n  public void bar() {\n    printHello();\n  }\n  private void printHello() {\n    System.out.println(\"Hello\");\n  }\n}",
     "complexity": 1,
     "insights": "The refactoring successfully extracted the print logic into a dedicated method..."
@@ -250,7 +277,7 @@ Client sends RefactorRequest
 
 ### `GET /api/history`
 
-Retrieves the complete history of all refactoring requests and results that have been processed by the server.
+Retrieves a list of unique identifiers for all refactoring sessions in the history.
 
 **Endpoint:** `GET http://localhost:8000/api/history`
 
@@ -260,28 +287,15 @@ Retrieves the complete history of all refactoring requests and results that have
 
 ```jsonc
 [
-  {
-    "id": <integer>,                   // Unique history record ID
-    "instruction": "<string>",         // The user's refactoring instruction
-    "original": "<string>",            // The original Java code
-    "refactored": "<string>",          // The refactored Java code
-    "insights": "<string>",            // The generated insights
-    "complexity": <integer | null>,    // Cyclomatic complexity score
-    "created_at": "<timestamp>"        // When the refactoring was completed (ISO 8601)
-  },
-  // ... more records
+  "550e8400-e29b-41d4-a716-446655440000", // Unique history record UUID
+  "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+  // ... more IDs
 ]
 ```
 
-| Field         | Type              | Description                                                         |
-| ------------- | ----------------- | ------------------------------------------------------------------- |
-| `id`          | `integer`         | Unique identifier for the history record.                           |
-| `instruction` | `string`          | The natural-language instruction the user provided.                 |
-| `original`    | `string`          | The raw Java code before refactoring.                               |
-| `refactored`  | `string`          | The final refactored Java code.                                     |
-| `insights`    | `string`          | AI-generated analysis of the refactoring changes.                   |
-| `complexity`  | `integer \| null` | Cyclomatic complexity score of the refactored code (null if empty). |
-| `created_at`  | `string`          | ISO 8601 timestamp of when the refactoring was completed.           |
+| Field | Type     | Description                                     |
+| ----- | -------- | ----------------------------------------------- |
+| `item` | `string` | The unique session identifier (UUID v4 string). |
 
 #### Example Request
 
@@ -293,19 +307,63 @@ curl http://localhost:8000/api/history
 
 ```json
 [
-    {
-        "id": 1,
-        "instruction": "Rename the class to Baz and extract the print into a separate method.",
-        "original": "public class Foo {\n  public void bar() {\n    System.out.println(\"Hello\");\n  }\n}",
-        "refactored": "public class Baz {\n  public void bar() {\n    printHello();\n  }\n  private void printHello() {\n    System.out.println(\"Hello\");\n  }\n}",
-        "insights": "The refactoring successfully renamed the class from Foo to Baz and extracted the print logic into a dedicated method for better separation of concerns.",
-        "complexity": 1,
-        "created_at": "2026-04-03T10:30:45Z"
-    }
+    "550e8400-e29b-41d4-a716-446655440000",
+    "6ba7b810-9dad-11d1-80b4-00c04fd430c8"
 ]
 ```
 
+
 ---
+
+### `GET /api/history/{history_id}`
+
+Retrieves the full details of a specific refactoring session by its unique ID.
+
+**Endpoint:** `GET http://localhost:8000/api/history/{history_id}`
+
+**Path Parameters:**
+
+| Parameter    | Type     | Description                                           |
+| ------------ | -------- | ----------------------------------------------------- |
+| `history_id` | `string` | The unique UUID of the refactoring session to fetch. |
+
+**Response:** HTTP 200 OK
+
+```jsonc
+{
+  "id": "<string>",                 // Unique history record UUID
+  "user_instruction": "<string>",   // The user's refactoring instruction
+  "original_code": "<string>",      // The original Java code
+  "refactored_code": "<string>",    // The refactored Java code
+  "insights": "<string>",          // The generated insights
+  "complexity": <integer | null>,  // Cyclomatic complexity score
+  "created_at": "<timestamp>"      // When the refactoring was completed (ISO 8601)
+}
+```
+
+**Errors:**
+
+- **404 Not Found**: If no refactoring session with the given ID exists.
+
+#### Example Request
+
+```bash
+curl http://localhost:8000/api/history/550e8400-e29b-41d4-a716-446655440000
+```
+
+#### Example Response
+
+```json
+{
+    "id": "550e8400-e29b-41d4-a716-446655440000",
+    "user_instruction": "Rename the class to Baz and extract the print into a separate method.",
+    "original_code": "public class Foo {\n  public void bar() {\n    System.out.println(\"Hello\");\n  }\n}",
+    "refactored_code": "public class Baz {\n  public void bar() {\n    printHello();\n  }\n  private void printHello() {\n    System.out.println(\"Hello\");\n  }\n}",
+    "insights": "The refactoring successfully renamed the class from Foo to Baz and extracted the print logic into a dedicated method for better separation of concerns.",
+    "complexity": 1,
+    "created_at": "2026-04-03T10:30:45Z"
+}
+```
 
 ## Enums & Constants
 
@@ -322,11 +380,12 @@ Identifies which agent is active. Used in `status` messages.
 
 ### `Message Types`
 
-| `type` value | Direction       | Description                       |
-| ------------ | --------------- | --------------------------------- |
-| `"status"`   | Server → Client | Progress update from an agent.    |
-| `"result"`   | Server → Client | Final refactored code + insights. |
-| `"error"`    | Server → Client | Validation/parse error response.  |
+| `type` value      | Direction       | Description                       |
+| ----------------- | --------------- | --------------------------------- |
+| `"connection_id"` | Server → Client | Unique session ID notification.   |
+| `"status"`         | Server → Client | Progress update from an agent.    |
+| `"result"`         | Server → Client | Final refactored code + insights. |
+| `"error"`          | Server → Client | Validation/parse error response.  |
 
 ---
 
@@ -338,6 +397,15 @@ Identifies which agent is active. Used in `status` messages.
 interface RefactorRequest {
     code: string;
     user_instruction: string;
+}
+```
+
+### Connection ID (Server → Client)
+
+```typescript
+interface ConnectionIdMessage {
+    type: "connection_id";
+    id: string;
 }
 ```
 
@@ -356,6 +424,7 @@ interface StatusMessage {
 ```typescript
 interface ResultMessage {
     type: "result";
+    id: string;
     code: string;
     complexity: number | null;
     insights: string;
@@ -393,7 +462,7 @@ type ErrorMessage = ValidationErrorMessage | MalformedJsonErrorMessage;
 ### Union of All Server Messages
 
 ```typescript
-type ServerMessage = StatusMessage | ResultMessage | ErrorMessage;
+type ServerMessage = ConnectionIdMessage | StatusMessage | ResultMessage | ErrorMessage;
 ```
 
 ---
@@ -416,10 +485,14 @@ ws.onmessage = (event) => {
     const msg = JSON.parse(event.data);
 
     switch (msg.type) {
+        case "connection_id":
+            console.log("Unique Session ID:", msg.id);
+            break;
         case "status":
             console.log(`[${msg.role}] ${msg.content}`);
             break;
         case "result":
+            console.log("Session ID:", msg.id);
             console.log("Refactored code:", msg.code);
             console.log("Complexity score:", msg.complexity);
             console.log("Insights:", msg.insights);
