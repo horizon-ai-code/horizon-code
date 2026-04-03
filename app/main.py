@@ -6,9 +6,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import ValidationError
 
 from app.modules.agent_service import AgentService
+from app.modules.connection_manager import ClientConnection
 from app.modules.orchestrator import Orchestrator
 from app.modules.validator import Validator
-from app.modules.websocket_manager import ClientConnection
 from app.utils.types import RefactorRequest
 
 app: FastAPI = FastAPI()

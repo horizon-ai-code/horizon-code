@@ -5,8 +5,8 @@ import yaml
 from llama_cpp import ChatCompletionRequestMessage, CreateChatCompletionResponse
 
 from app.modules.agent_service import AgentService
+from app.modules.connection_manager import ClientConnection
 from app.modules.validator import Validator
-from app.modules.websocket_manager import ClientConnection
 from app.utils.paths import MODELS_CONFIG_PATH
 from app.utils.types import Role
 
@@ -31,11 +31,8 @@ class Orchestrator:
     ) -> None:
         current_code: str = user_code
         current_instruction: str = user_instruction
-        iteration: int = 0
 
         while True:
-            iteration += 1
-
             await self.agent_service.load(self.model_config["planner"])
 
             await self._notify(
