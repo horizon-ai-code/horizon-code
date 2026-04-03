@@ -3,10 +3,11 @@ from typing import Optional
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from playhouse.db_url import connect
 from pydantic import ValidationError
 
 from app.modules.agent_service import AgentService
-from app.modules.connection_manager import ClientConnection
+from app.modules.connection_manager import ClientConnection, ConnectionManager
 from app.modules.orchestrator import Orchestrator
 from app.modules.validator import Validator
 from app.utils.types import RefactorRequest
@@ -28,6 +29,7 @@ app.add_middleware(
 
 agent_service: AgentService = AgentService()
 validator: Validator = Validator()
+connection: ConnectionManager = ConnectionManager()
 orchestrator: Orchestrator = Orchestrator(
     agent_service=agent_service, validator=validator
 )
@@ -37,7 +39,9 @@ orchestrator: Orchestrator = Orchestrator(
 async def entrypoint(websocket: WebSocket) -> None:
     await websocket.accept()
 
-    connection: ClientConnection = ClientConnection(websocket=websocket)
+    client_conn: ClientConnection = connection.create_websocket_connection(
+        websocket=websocket
+    )
 
     try:
         while True:
@@ -48,7 +52,7 @@ async def entrypoint(websocket: WebSocket) -> None:
                 continue
 
             await orchestrator.execute_orchestration(
-                client=connection,
+                client=client_conn,
                 user_code=validated.code,
                 user_instruction=validated.user_instruction,
             )
@@ -59,6 +63,11 @@ async def entrypoint(websocket: WebSocket) -> None:
         print(f"An error occurred: {e}")
     finally:
         await agent_service.unload()
+
+
+@app.get("/api/history")
+async def get_history():
+    return connection.get_rest_history()
 
 
 async def get_validated_data(websocket: WebSocket) -> Optional[RefactorRequest]:

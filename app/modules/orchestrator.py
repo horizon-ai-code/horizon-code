@@ -124,10 +124,14 @@ class Orchestrator:
         )
 
         await client.send_result(
+            original_code=user_code,
+            user_instruction=user_instruction,
             final_code=current_code,
             insights=insights["insights"],
-            complexity=complexity,
+            complexity=complexity_score,
         )
+
+        print("Orchestration finished.")
 
     async def generate_plan_and_instruction(
         self, code: str, instructions: str
