@@ -75,6 +75,12 @@ class ConnectionManager:
         """
         return self.db.get_history_by_id(id)
 
+    async def delete_history_by_id(self, id: str) -> bool:
+        """
+        Delegates single history deletion.
+        """
+        return self.db.delete_history_by_id(id)
+
     def create_websocket_connection(self, websocket: WebSocket) -> ClientConnection:
         """
         Factory method: Builds the ClientConnection and safely injects

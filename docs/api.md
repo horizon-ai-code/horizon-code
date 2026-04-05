@@ -5,10 +5,12 @@ The backend exposes:
 - A **WebSocket** endpoint for real-time refactoring (`ws://localhost:8000/ws`)
 - A **REST** endpoint for fetching refactoring history (`GET /api/history`)
 - A **REST** endpoint for fetching details of a specific refactoring (`GET /api/history/{history_id}`)
+- A **REST** endpoint for deleting a specific refactoring history record (`DELETE /api/history/{history_id}`)
 
 ---
 
-## Table of Contents
+## 1. Interaction Flow
+
 
 - [WebSocket API](#websocket-api)
     - [Connection](#connection)
@@ -22,6 +24,8 @@ The backend exposes:
 - [REST API](#rest-api)
     - [GET /api/history](#get-apihistory)
     - [GET /api/history/{history_id}](#get-apihistoryhistory_id)
+    - [DELETE /api/history/{history_id}](#delete-apihistoryhistory_id)
+
 - [Enums & Constants](#enums--constants)
 - [Data Structures Reference](#data-structures-reference)
 
@@ -383,6 +387,37 @@ curl http://localhost:8000/api/history/550e8400-e29b-41d4-a716-446655440000
 }
 ```
 
+### `DELETE /api/history/{history_id}`
+
+Deletes a specific refactoring session from the history.
+
+**Endpoint:** `DELETE http://localhost:8000/api/history/{history_id}`
+
+**Path Parameters:**
+
+| Parameter    | Type     | Description                                           |
+| ------------ | -------- | ----------------------------------------------------- |
+| `history_id` | `string` | The unique UUID of the refactoring session to delete. |
+
+**Response:** HTTP 200 OK
+
+```json
+{
+  "status": "history_deleted",
+  "message": "Refactor history 550e8400-e29b-41d4-a716-446655440000 deleted"
+}
+```
+
+**Errors:**
+
+- **404 Not Found**: If no refactoring session with the given ID exists.
+
+#### Example Request
+
+```bash
+curl -X DELETE http://localhost:8000/api/history/550e8400-e29b-41d4-a716-446655440000
+```
+
 
 ## Enums & Constants
 
@@ -410,6 +445,7 @@ Identifies which agent is active. Used in `status` messages.
 
 - [GET /api/history](#get-apihistory) — List of all session IDs.
 - [GET /api/history/{history_id}](#get-apihistoryhistory_id) — Full session details with **bundled orchestration logs**.
+- [DELETE /api/history/{history_id}](#delete-apihistoryhistory_id) — Permanently removes a session from history.
 
 ---
 

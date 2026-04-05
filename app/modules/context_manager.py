@@ -123,5 +123,15 @@ class DatabaseManager:
         except RefactorHistory.DoesNotExist:
             return None
 
+    def delete_history_by_id(self, id: str) -> bool:
+        """
+        Deletes a single history record by its UUID.
+        Returns True if deleted, False if not found.
+        """
+        with db.atomic():
+            query = RefactorHistory.delete().where(RefactorHistory.id == id)
+            rows_deleted = query.execute()
+            return rows_deleted > 0
+
 
 

@@ -80,6 +80,14 @@ async def get_history_detail(history_id: str):
     return record
 
 
+@app.delete("/api/history/{history_id}")
+async def delete_history_detail(history_id: str):
+    deleted = await connection.delete_history_by_id(history_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Refactor history not found")
+    return {"status": "history_deleted", "message": f"Refactor history {history_id} deleted"}
+
+
 async def get_validated_data(websocket: WebSocket) -> Optional[RefactorRequest]:
     """
     Handles raw reception, JSON decoding, and Pydantic validation.
