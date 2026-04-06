@@ -1,5 +1,5 @@
-import json
 import asyncio
+import json
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -10,7 +10,7 @@ from app.modules.agent_service import AgentService
 from app.modules.connection_manager import ClientConnection, ConnectionManager
 from app.modules.orchestrator import Orchestrator
 from app.modules.validator import Validator
-from app.utils.types import RefactorRequest
+from app.utils.types import RefactorRequest, Role
 
 app: FastAPI = FastAPI()
 
@@ -38,7 +38,6 @@ orchestrator: Orchestrator = Orchestrator(
 orchestration_lock = asyncio.Lock()
 
 
-
 @app.websocket("/ws")
 async def entrypoint(websocket: WebSocket) -> None:
     await websocket.accept()
@@ -55,10 +54,18 @@ async def entrypoint(websocket: WebSocket) -> None:
             if not validated:
                 continue
 
-            await client_conn.send_connection_id()
+            if orchestration_lock.locked():
+                await client_conn.send_status(
+                    role=Role.System,
+                    content="Server is currently busy with another request. Your request is in the queue and will start automatically when ready...",
+                )
 
             # Ensure only one refactor request is processed at a time globally
             async with orchestration_lock:
+                # Every new request in the same connection gets a unique ID
+                client_conn.reset_id()
+                await client_conn.send_connection_id()
+
                 await orchestrator.execute_orchestration(
                     client=client_conn,
                     user_code=validated.code,
@@ -93,7 +100,10 @@ async def delete_history_detail(history_id: str):
     deleted = await connection.delete_history_by_id(history_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Refactor history not found")
-    return {"status": "history_deleted", "message": f"Refactor history {history_id} deleted"}
+    return {
+        "status": "history_deleted",
+        "message": f"Refactor history {history_id} deleted",
+    }
 
 
 async def get_validated_data(websocket: WebSocket) -> Optional[RefactorRequest]:

@@ -18,6 +18,10 @@ class ClientConnection:
         self.db = db
         self.id = str(uuid.uuid4())
 
+    def reset_id(self) -> None:
+        """Generates a new unique session ID for a new orchestration request."""
+        self.id = str(uuid.uuid4())
+
     async def send_connection_id(self) -> None:
         """Sends the unique session ID to the frontend upon connection."""
         message: dict = {"type": "connection_id", "id": self.id}

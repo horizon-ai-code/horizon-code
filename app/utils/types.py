@@ -13,3 +13,4 @@ class Role(str, Enum):
     Generator = "Generator"
     Judge = "Judge"
     Validator = "Validator"
+    System = "System"
