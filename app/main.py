@@ -1,4 +1,5 @@
 import json
+import asyncio
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
@@ -33,6 +34,9 @@ orchestrator: Orchestrator = Orchestrator(
     agent_service=agent_service, validator=validator, db=connection.db
 )
 
+# Global lock to serialize all orchestration (model & DB) operations
+orchestration_lock = asyncio.Lock()
+
 
 
 @app.websocket("/ws")
@@ -53,18 +57,22 @@ async def entrypoint(websocket: WebSocket) -> None:
 
             await client_conn.send_connection_id()
 
-            await orchestrator.execute_orchestration(
-                client=client_conn,
-                user_code=validated.code,
-                user_instruction=validated.user_instruction,
-            )
+            # Ensure only one refactor request is processed at a time globally
+            async with orchestration_lock:
+                await orchestrator.execute_orchestration(
+                    client=client_conn,
+                    user_code=validated.code,
+                    user_instruction=validated.user_instruction,
+                )
 
     except WebSocketDisconnect as e:
         print(f"Connection disconnected: {e}")
     except Exception as e:
         print(f"An error occurred: {e}")
     finally:
-        await agent_service.unload()
+        # Only unload if no one else is currently orchestrating
+        if not orchestration_lock.locked():
+            await agent_service.unload()
 
 
 @app.get("/api/history")

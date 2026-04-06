@@ -4,10 +4,9 @@ from typing import Any, Dict, List, Optional
 import yaml
 from llama_cpp import ChatCompletionRequestMessage, CreateChatCompletionResponse
 
-from app.modules.context_manager import DatabaseManager
 from app.modules.agent_service import AgentService
-
 from app.modules.connection_manager import ClientConnection
+from app.modules.context_manager import DatabaseManager
 from app.modules.validator import Validator
 from app.utils.paths import MODELS_CONFIG_PATH
 from app.utils.types import Role
@@ -23,7 +22,6 @@ class Orchestrator:
         self.agent_service: AgentService = agent_service
         self.validator: Validator = validator
         self.db: DatabaseManager = db
-
 
         try:
             with open(MODELS_CONFIG_PATH, "r") as config:
@@ -42,7 +40,6 @@ class Orchestrator:
         current_code: str = user_code
         current_instruction: str = user_instruction
 
-
         while True:
             await self.agent_service.load(self.model_config["planner"])
 
@@ -51,7 +48,6 @@ class Orchestrator:
                 role=Role.Planner,
                 message="Generating plan & instructions...",
             )
-
 
             result: Dict[str, str] = await self.generate_plan_and_instruction(
                 current_code, current_instruction
@@ -83,11 +79,9 @@ class Orchestrator:
                 content=refactored_code["code"],
             )
 
-
             await self._notify(
                 client=client, role=Role.Validator, message="Checking syntax..."
             )
-
 
             # Type is Dict[str, Any] because it contains bools, strings, and lists
             syntax_verdict: Dict[str, Any] = self.validator.check_syntax(
@@ -106,7 +100,6 @@ class Orchestrator:
                 client=client, role=Role.Validator, message="Errors detected."
             )
 
-
             await self.agent_service.swap(self.model_config["judge"])
 
             await self._notify(
@@ -114,7 +107,6 @@ class Orchestrator:
                 role=Role.Judge,
                 message="Interpreting errors & generating fix instructions...",
             )
-
 
             judge_result: Dict[
                 str, str
@@ -135,7 +127,6 @@ class Orchestrator:
             client=client, role=Role.Validator, message="Checking complexity..."
         )
 
-
         complexity: Dict[str, Any] = self.validator.check_complexity(current_code)
 
         # Optional[int] because complexity score can technically be None if the snippet is empty
@@ -145,13 +136,11 @@ class Orchestrator:
             client=client, role=Role.Validator, message="Complexity measured."
         )
 
-
         await self.agent_service.swap(self.model_config["judge"])
 
         await self._notify(
             client=client, role=Role.Judge, message="Generating insights..."
         )
-
 
         insights: Dict[str, str] = await self.generate_insights(
             user_code, current_code, complexity_score
@@ -162,7 +151,7 @@ class Orchestrator:
             insights=insights["insights"],
             complexity=complexity_score,
         )
-
+        await self.agent_service.unload()
 
         print("Orchestration finished.")
 
@@ -315,4 +304,3 @@ class Orchestrator:
         )
 
         await client.send_status(role=role, content=message)
-
