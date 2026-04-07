@@ -1,10 +1,10 @@
 import asyncio
 import json
-from typing import Optional
+from typing import Optional, List
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import ValidationError
+from pydantic import ValidationError, UUID4
 
 from app.modules.agent_service import AgentService
 from app.modules.connection_manager import ClientConnection, ConnectionManager
@@ -12,6 +12,7 @@ from app.modules.context_manager import db
 from app.modules.orchestrator import Orchestrator
 from app.modules.validator import Validator
 from app.utils.types import RefactorRequest, Role
+from app.utils.schemas import HistoryStub, HistoryDetail, DeleteResponse
 
 app: FastAPI = FastAPI()
 
@@ -100,22 +101,34 @@ async def entrypoint(websocket: WebSocket) -> None:
             await agent_service.unload()
 
 
-@app.get("/api/history")
+@app.get("/api/history", response_model=List[HistoryStub], dependencies=[Depends(get_db)])
 async def get_history():
     return await connection.get_rest_history()
 
 
-@app.get("/api/history/{history_id}")
-async def get_history_detail(history_id: str):
-    record = await connection.get_history_by_id(history_id)
+@app.get(
+    "/api/history/{history_id}",
+    response_model=HistoryDetail,
+    dependencies=[Depends(get_db)],
+)
+async def get_history_detail(
+    history_id: UUID4, _=Depends(check_orchestration_lock)
+):
+    record = await connection.get_history_by_id(str(history_id))
     if not record:
         raise HTTPException(status_code=404, detail="Refactor history not found")
     return record
 
 
-@app.delete("/api/history/{history_id}")
-async def delete_history_detail(history_id: str):
-    deleted = await connection.delete_history_by_id(history_id)
+@app.delete(
+    "/api/history/{history_id}",
+    response_model=DeleteResponse,
+    dependencies=[Depends(get_db)],
+)
+async def delete_history_detail(
+    history_id: UUID4, _=Depends(check_orchestration_lock)
+):
+    deleted = await connection.delete_history_by_id(str(history_id))
     if not deleted:
         raise HTTPException(status_code=404, detail="Refactor history not found")
     return {
