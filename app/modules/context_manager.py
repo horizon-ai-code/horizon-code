@@ -88,12 +88,15 @@ class DatabaseManager:
             ).where(RefactorHistory.id == id)
             query.execute()
 
-    def get_history(self) -> List[str]:
+    def get_history(self) -> List[Dict[str, Any]]:
         """
-        Fetches all record IDs from the refactor history.
+        Fetches all record IDs and instructions from the refactor history.
         """
-        query = RefactorHistory.select(RefactorHistory.id)
-        return [str(record.id) for record in query]
+        query = RefactorHistory.select(RefactorHistory.id, RefactorHistory.user_instruction)
+        return [
+            {"id": str(record.id), "user_instruction": record.user_instruction}
+            for record in query
+        ]
 
     def get_history_by_id(self, id: str) -> Optional[Dict[str, Any]]:
         """
