@@ -2,12 +2,13 @@ import asyncio
 import json
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import ValidationError
 
 from app.modules.agent_service import AgentService
 from app.modules.connection_manager import ClientConnection, ConnectionManager
+from app.modules.context_manager import db
 from app.modules.orchestrator import Orchestrator
 from app.modules.validator import Validator
 from app.utils.types import RefactorRequest, Role
@@ -36,6 +37,23 @@ orchestrator: Orchestrator = Orchestrator(
 
 # Global lock to serialize all orchestration (model & DB) operations
 orchestration_lock = asyncio.Lock()
+
+
+async def get_db():
+    try:
+        db.connect(reuse_if_open=True)
+        yield
+    finally:
+        if not db.is_closed():
+            db.close()
+
+
+async def check_orchestration_lock():
+    if orchestration_lock.locked():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="System is currently busy with an active orchestration.",
+        )
 
 
 @app.websocket("/ws")
