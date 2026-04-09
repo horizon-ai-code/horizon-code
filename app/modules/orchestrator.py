@@ -57,7 +57,7 @@ class Orchestrator:
             await self._notify(
                 client=client,
                 role=Role.Planner,
-                message="Plan generated.",
+                message=f"Plan generated: {result['plan']}",
                 content=result["plan"],
             )
 
