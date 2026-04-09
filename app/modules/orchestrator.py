@@ -47,7 +47,7 @@ class Orchestrator:
 
         while attempt_count < max_iterations:
             attempt_count += 1
-            await self.agent_service.load(self.model_config["planner"])
+            await self.agent_service.swap(self.model_config["planner"])
 
             await self._notify(
                 client=client,
@@ -67,7 +67,8 @@ class Orchestrator:
                 content=result["plan"],
             )
 
-            print(result["plan"])
+            # print(f"plan: {result['plan']}")
+            # print(f"instruction: {result['instructions']}")
 
             await self.agent_service.swap(self.model_config["generator"])
 
@@ -221,6 +222,7 @@ class Orchestrator:
         )
 
         text: str = self._get_response(raw_reponse)
+        print(text)
 
         result: Dict[str, str] = {
             "code": self._extract_text(raw_text=text, tags="code"),
@@ -290,20 +292,33 @@ class Orchestrator:
         return response["choices"][0]["message"]["content"]  # type: ignore
 
     def _extract_text(self, raw_text: str, tags: str) -> str:
+        # 1. Strip the thinking process
         text_without_thoughts: str = re.sub(
             r"<think>.*?</think>", "", raw_text, flags=re.DOTALL | re.IGNORECASE
         )
 
+        # 2. Try the Happy Path: Tags were formatted correctly
         pattern: str = rf"<{tags}\b[^>]*>(.*?)</{tags}>"
-
-        # Note: Match can be None, so we type it as Optional[re.Match]
         match: Optional[re.Match[str]] = re.search(
             pattern, text_without_thoughts, re.DOTALL
         )
+
         if match:
             return match.group(1).strip()
 
-        return ""
+        # 3. FALLBACK PATH: The model forgot the XML tags entirely.
+        print(f"[Warning] XML tags missing for '{tags}'. Using fallback parser.")
+
+        # Strip out markdown code blocks (e.g., ```java ... ```) so we don't
+        # accidentally pass hallucinated code into the instructions.
+        # text_without_code_blocks: str = re.sub(
+        #     r"```[a-zA-Z]*\n.*?```", "", text_without_thoughts, flags=re.DOTALL
+        # )
+
+        # Return the remaining clean text as a fallback.
+        # Note: If tags are completely missing, both 'plan' and 'instructions'
+        # will end up receiving this same block of text. This is a safe compromise!
+        return text_without_thoughts.strip()
 
     async def _notify(
         self,
