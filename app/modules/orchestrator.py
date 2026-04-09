@@ -40,13 +40,19 @@ class Orchestrator:
         current_code: str = user_code
         current_instruction: str = user_instruction
 
-        while True:
+        # Iteration Control
+        max_iterations: int = 3
+        attempt_count: int = 0
+        is_valid_refactor: bool = False
+
+        while attempt_count < max_iterations:
+            attempt_count += 1
             await self.agent_service.load(self.model_config["planner"])
 
             await self._notify(
                 client=client,
                 role=Role.Planner,
-                message="Generating plan & instructions...",
+                message=f"Generating plan & instructions (Attempt {attempt_count}/{max_iterations})...",
             )
 
             result: Dict[str, str] = await self.generate_plan_and_instruction(
@@ -94,6 +100,7 @@ class Orchestrator:
                 )
 
                 current_code = refactored_code["code"]
+                is_valid_refactor = True
                 break
 
             await self._notify(
@@ -123,6 +130,10 @@ class Orchestrator:
             current_code = refactored_code["code"]
             current_instruction = judge_result["instructions"]
 
+        # Fallback Mechanism
+        if not is_valid_refactor:
+            current_code = user_code
+
         await self._notify(
             client=client, role=Role.Validator, message="Checking complexity..."
         )
@@ -136,15 +147,21 @@ class Orchestrator:
             client=client, role=Role.Validator, message="Complexity measured."
         )
 
-        await self.agent_service.swap(self.model_config["judge"])
+        insights: Dict[str, str] = {}
+        if is_valid_refactor:
+            await self.agent_service.swap(self.model_config["judge"])
 
-        await self._notify(
-            client=client, role=Role.Judge, message="Generating insights..."
-        )
+            await self._notify(
+                client=client, role=Role.Judge, message="Generating insights..."
+            )
 
-        insights: Dict[str, str] = await self.generate_insights(
-            user_code, current_code, complexity_score
-        )
+            insights = await self.generate_insights(
+                user_code, current_code, complexity_score
+            )
+        else:
+            insights = {
+                "insights": "Unable to refactor: the generated code remained too complex or contained persistent syntax errors after maximum attempts. Reverted to original code."
+            }
 
         await client.send_result(
             final_code=current_code,
