@@ -1,15 +1,18 @@
+import asyncio
 import json
-from typing import Optional
+from typing import Optional, List
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import ValidationError
+from pydantic import ValidationError, UUID4
 
 from app.modules.agent_service import AgentService
+from app.modules.connection_manager import ClientConnection, ConnectionManager
+from app.modules.context_manager import db
 from app.modules.orchestrator import Orchestrator
 from app.modules.validator import Validator
-from app.modules.websocket_manager import ClientConnection
-from app.utils.types import RefactorRequest
+from app.utils.types import RefactorRequest, Role
+from app.utils.schemas import HistoryStub, HistoryDetail, DeleteResponse
 
 app: FastAPI = FastAPI()
 
@@ -28,16 +31,39 @@ app.add_middleware(
 
 agent_service: AgentService = AgentService()
 validator: Validator = Validator()
+connection: ConnectionManager = ConnectionManager()
 orchestrator: Orchestrator = Orchestrator(
-    agent_service=agent_service, validator=validator
+    agent_service=agent_service, validator=validator, db=connection.db
 )
+
+# Global lock to serialize all orchestration (model & DB) operations
+orchestration_lock = asyncio.Lock()
+
+
+async def get_db():
+    try:
+        db.connect(reuse_if_open=True)
+        yield
+    finally:
+        if not db.is_closed():
+            db.close()
+
+
+async def check_orchestration_lock():
+    if orchestration_lock.locked():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="System is currently busy with an active orchestration.",
+        )
 
 
 @app.websocket("/ws")
 async def entrypoint(websocket: WebSocket) -> None:
     await websocket.accept()
 
-    connection: ClientConnection = ClientConnection(websocket=websocket)
+    client_conn: ClientConnection = connection.create_websocket_connection(
+        websocket=websocket
+    )
 
     try:
         while True:
@@ -47,18 +73,68 @@ async def entrypoint(websocket: WebSocket) -> None:
             if not validated:
                 continue
 
-            await orchestrator.execute_orchestration(
-                client=connection,
-                user_code=validated.code,
-                user_instruction=validated.user_instruction,
-            )
+            if orchestration_lock.locked():
+                await client_conn.send_status(
+                    role=Role.System,
+                    content="Server is currently busy with another request. Your request is in the queue and will start automatically when ready...",
+                )
+
+            # Ensure only one refactor request is processed at a time globally
+            async with orchestration_lock:
+                # Every new request in the same connection gets a unique ID
+                client_conn.reset_id()
+                await client_conn.send_connection_id()
+
+                await orchestrator.execute_orchestration(
+                    client=client_conn,
+                    user_code=validated.code,
+                    user_instruction=validated.user_instruction,
+                )
 
     except WebSocketDisconnect as e:
         print(f"Connection disconnected: {e}")
     except Exception as e:
         print(f"An error occurred: {e}")
     finally:
-        await agent_service.unload()
+        # Only unload if no one else is currently orchestrating
+        if not orchestration_lock.locked():
+            await agent_service.unload()
+
+
+@app.get("/api/history", response_model=List[HistoryStub], dependencies=[Depends(get_db)])
+async def get_history():
+    return await connection.get_rest_history()
+
+
+@app.get(
+    "/api/history/{history_id}",
+    response_model=HistoryDetail,
+    dependencies=[Depends(get_db)],
+)
+async def get_history_detail(
+    history_id: UUID4, _=Depends(check_orchestration_lock)
+):
+    record = await connection.get_history_by_id(str(history_id))
+    if not record:
+        raise HTTPException(status_code=404, detail="Refactor history not found")
+    return record
+
+
+@app.delete(
+    "/api/history/{history_id}",
+    response_model=DeleteResponse,
+    dependencies=[Depends(get_db)],
+)
+async def delete_history_detail(
+    history_id: UUID4, _=Depends(check_orchestration_lock)
+):
+    deleted = await connection.delete_history_by_id(str(history_id))
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Refactor history not found")
+    return {
+        "status": "history_deleted",
+        "message": f"Refactor history {history_id} deleted",
+    }
 
 
 async def get_validated_data(websocket: WebSocket) -> Optional[RefactorRequest]:

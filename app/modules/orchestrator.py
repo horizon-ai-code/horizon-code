@@ -5,8 +5,9 @@ import yaml
 from llama_cpp import ChatCompletionRequestMessage, CreateChatCompletionResponse
 
 from app.modules.agent_service import AgentService
+from app.modules.connection_manager import ClientConnection
+from app.modules.context_manager import DatabaseManager
 from app.modules.validator import Validator
-from app.modules.websocket_manager import ClientConnection
 from app.utils.paths import MODELS_CONFIG_PATH
 from app.utils.types import Role
 
@@ -16,9 +17,11 @@ class Orchestrator:
         self,
         agent_service: AgentService,
         validator: Validator,
+        db: DatabaseManager,
     ) -> None:
         self.agent_service: AgentService = agent_service
         self.validator: Validator = validator
+        self.db: DatabaseManager = db
 
         try:
             with open(MODELS_CONFIG_PATH, "r") as config:
@@ -29,19 +32,27 @@ class Orchestrator:
     async def execute_orchestration(
         self, client: ClientConnection, user_code: str, user_instruction: str
     ) -> None:
+        # 1. Initialize the session in the database immediately
+        self.db.create_session(
+            id=client.id, instruction=user_instruction, original_code=user_code
+        )
+
         current_code: str = user_code
         current_instruction: str = user_instruction
-        iteration: int = 0
 
-        while True:
-            iteration += 1
+        # Iteration Control
+        max_iterations: int = 3
+        attempt_count: int = 0
+        is_valid_refactor: bool = False
 
-            await self.agent_service.load(self.model_config["planner"])
+        while attempt_count < max_iterations:
+            attempt_count += 1
+            await self.agent_service.swap(self.model_config["planner"])
 
             await self._notify(
                 client=client,
                 role=Role.Planner,
-                content="Generating plan & instructions...",
+                message=f"Generating plan & instructions (Attempt {attempt_count}/{max_iterations})...",
             )
 
             result: Dict[str, str] = await self.generate_plan_and_instruction(
@@ -49,22 +60,34 @@ class Orchestrator:
             )
             instructions: str = result["instructions"]
 
-            await self._notify(client=client, role=Role.Planner, content=result["plan"])
+            await self._notify(
+                client=client,
+                role=Role.Planner,
+                message=f"Plan generated: {result['plan']}",
+                content=result["plan"],
+            )
+
+            # print(f"plan: {result['plan']}")
+            # print(f"instruction: {result['instructions']}")
 
             await self.agent_service.swap(self.model_config["generator"])
 
             await self._notify(
-                client=client, role=Role.Generator, content="Refactoring code..."
+                client=client, role=Role.Generator, message="Refactoring code..."
             )
+
             refactored_code: Dict[str, str] = await self.generate_refactored_code(
                 current_code, instructions
             )
             await self._notify(
-                client=client, role=Role.Generator, content="Refactor draft finished."
+                client=client,
+                role=Role.Generator,
+                message="Refactor draft finished.",
+                content=refactored_code["code"],
             )
 
             await self._notify(
-                client=client, role=Role.Validator, content="Checking syntax..."
+                client=client, role=Role.Validator, message="Checking syntax..."
             )
 
             # Type is Dict[str, Any] because it contains bools, strings, and lists
@@ -74,13 +97,15 @@ class Orchestrator:
 
             if syntax_verdict["is_valid"]:
                 await self._notify(
-                    client=client, role=Role.Validator, content="Syntax passed."
+                    client=client, role=Role.Validator, message="Syntax passed."
                 )
+
                 current_code = refactored_code["code"]
+                is_valid_refactor = True
                 break
 
             await self._notify(
-                client=client, role=Role.Validator, content="Errors detected."
+                client=client, role=Role.Validator, message="Errors detected."
             )
 
             await self.agent_service.swap(self.model_config["judge"])
@@ -88,7 +113,7 @@ class Orchestrator:
             await self._notify(
                 client=client,
                 role=Role.Judge,
-                content="Interpreting errors & generating fix instructions...",
+                message="Interpreting errors & generating fix instructions...",
             )
 
             judge_result: Dict[
@@ -97,14 +122,21 @@ class Orchestrator:
                 refactored_code["code"], syntax_verdict["errors"]
             )
             await self._notify(
-                client=client, role=Role.Judge, content=judge_result["interpretation"]
+                client=client,
+                role=Role.Judge,
+                message="Errors interpreted.",
+                content=judge_result["interpretation"],
             )
 
             current_code = refactored_code["code"]
             current_instruction = judge_result["instructions"]
 
+        # Fallback Mechanism
+        if not is_valid_refactor:
+            current_code = user_code
+
         await self._notify(
-            client=client, role=Role.Validator, content="Checking complexity..."
+            client=client, role=Role.Validator, message="Checking complexity..."
         )
 
         complexity: Dict[str, Any] = self.validator.check_complexity(current_code)
@@ -113,24 +145,33 @@ class Orchestrator:
         complexity_score: Optional[int] = complexity["complexity_score"]
 
         await self._notify(
-            client=client, role=Role.Validator, content="Complexity measured."
+            client=client, role=Role.Validator, message="Complexity measured."
         )
 
-        await self.agent_service.swap(self.model_config["judge"])
+        insights: Dict[str, str] = {}
+        if is_valid_refactor:
+            await self.agent_service.swap(self.model_config["judge"])
 
-        await self._notify(
-            client=client, role=Role.Judge, content="Generating insights..."
-        )
+            await self._notify(
+                client=client, role=Role.Judge, message="Generating insights..."
+            )
 
-        insights: Dict[str, str] = await self.generate_insights(
-            user_code, current_code, complexity_score
-        )
+            insights = await self.generate_insights(
+                user_code, current_code, complexity_score
+            )
+        else:
+            insights = {
+                "insights": "Unable to refactor: the generated code remained too complex or contained persistent syntax errors after maximum attempts. Reverted to original code."
+            }
 
         await client.send_result(
             final_code=current_code,
             insights=insights["insights"],
-            complexity=complexity,
+            complexity=complexity_score,
         )
+        await self.agent_service.unload()
+
+        print("Orchestration finished.")
 
     async def generate_plan_and_instruction(
         self, code: str, instructions: str
@@ -152,6 +193,7 @@ class Orchestrator:
         )
 
         text: str = self._get_response(raw_reponse)
+        # print(text)
 
         result: Dict[str, str] = {
             "plan": self._extract_text(raw_text=text, tags="plan"),
@@ -180,6 +222,7 @@ class Orchestrator:
         )
 
         text: str = self._get_response(raw_reponse)
+        print(text)
 
         result: Dict[str, str] = {
             "code": self._extract_text(raw_text=text, tags="code"),
@@ -249,22 +292,47 @@ class Orchestrator:
         return response["choices"][0]["message"]["content"]  # type: ignore
 
     def _extract_text(self, raw_text: str, tags: str) -> str:
+        # 1. Strip the thinking process
         text_without_thoughts: str = re.sub(
             r"<think>.*?</think>", "", raw_text, flags=re.DOTALL | re.IGNORECASE
         )
 
+        # 2. Try the Happy Path: Tags were formatted correctly
         pattern: str = rf"<{tags}\b[^>]*>(.*?)</{tags}>"
-
-        # Note: Match can be None, so we type it as Optional[re.Match]
         match: Optional[re.Match[str]] = re.search(
             pattern, text_without_thoughts, re.DOTALL
         )
+
         if match:
             return match.group(1).strip()
 
-        return ""
+        # 3. FALLBACK PATH: The model forgot the XML tags entirely.
+        print(f"[Warning] XML tags missing for '{tags}'. Using fallback parser.")
 
-    async def _notify(self, client: ClientConnection, role: Role, content: str) -> None:
-        """Helper to print to terminal AND send to frontend simultaneously."""
-        print(f"[{role}] {content}")
-        await client.send_status(role=role, content=content)
+        # Strip out markdown code blocks (e.g., ```java ... ```) so we don't
+        # accidentally pass hallucinated code into the instructions.
+        # text_without_code_blocks: str = re.sub(
+        #     r"```[a-zA-Z]*\n.*?```", "", text_without_thoughts, flags=re.DOTALL
+        # )
+
+        # Return the remaining clean text as a fallback.
+        # Note: If tags are completely missing, both 'plan' and 'instructions'
+        # will end up receiving this same block of text. This is a safe compromise!
+        return text_without_thoughts.strip()
+
+    async def _notify(
+        self,
+        client: ClientConnection,
+        role: Role,
+        message: str,
+        content: Optional[str] = None,
+    ) -> None:
+        """Helper to print to terminal, persist to DB, and notify frontend."""
+        print(f"[{role}] {message}")
+
+        # Persist the log entry to the database in real-time
+        self.db.log_status(
+            session_id=client.id, role=role, status=message, content=content
+        )
+
+        await client.send_status(role=role, content=message)

@@ -3,23 +3,18 @@ planner:
   max_tokens: 4096
   context_size: 6144
   layers: 28
-  filename: "deepseek_engine.gguf"
+  filename: "qwen_coder.gguf"
   sysprompt: |
-    You are an expert Software Architect and Technical Planner. Your task is to deeply analyze the provided <code> and the user's <instruction>.
+    You are an expert Software Architect and Technical Planner. Your task is to analyze the provided <code> and the user's <instruction>.
 
-    You must devise a clear strategy to modify the code. You MUST structure your entire response using EXACTLY these two XML tags:
+    CRITICAL RULE: You MUST format your output EXACTLY matching the template below. Do not merge tags. Do not forget the closing tags.
 
-    ONLY FOLLOW THE FORMAT PROVIDED
     <plan>
-    Write a brief, high-level overview of the necessary changes and the architectural reasoning behind them.
+    [Write a brief, high-level overview of the necessary changes and the architectural reasoning here.]
     </plan>
     <instructions>
-    Write precise, step-by-step, technical instructions for a developer to implement the plan. Be specific about what lines, variables, or functions to change.
+    [Write precise, step-by-step, technical instructions for a developer to implement the plan here.]
     </instructions>
-
-    DO NOT OUTPUT ANY EXPECTED CODE RESULT JUST THE INSTRUCTIONS
-
-    CRITICAL: Do not output any code, conversational text, pleasantries, or markdown formatting outside of these specific tags. Your output is being parsed by a strict automated script.
 
 generator:
   temperature: 0.1
