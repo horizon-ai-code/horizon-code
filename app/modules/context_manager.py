@@ -30,7 +30,9 @@ class RefactorHistory(peewee.Model):
 
 class OrchestrationLog(peewee.Model):
     id = peewee.AutoField()
-    session = peewee.ForeignKeyField(RefactorHistory, backref="logs", on_delete="CASCADE")
+    session = peewee.ForeignKeyField(
+        RefactorHistory, backref="logs", on_delete="CASCADE"
+    )
     role = peewee.CharField()
     status = peewee.TextField()
     content = peewee.TextField(null=True)
@@ -91,8 +93,12 @@ class DatabaseManager:
     def get_history(self) -> List[Dict[str, Any]]:
         """
         Fetches all record IDs and instructions from the refactor history.
+        Ordered by the most recent first.
         """
-        query = RefactorHistory.select(RefactorHistory.id, RefactorHistory.user_instruction)
+        query = RefactorHistory.select(
+            RefactorHistory.id, RefactorHistory.user_instruction
+        ).order_by(RefactorHistory.created_at.desc())
+
         return [
             {"id": str(record.id), "user_instruction": record.user_instruction}
             for record in query
@@ -117,7 +123,6 @@ class DatabaseManager:
                     log_dict["created_at"] = log_dict["created_at"].isoformat()
                 data["logs"].append(log_dict)
 
-
             # Also ensure the parent record's timestamp is serialized
             if data.get("created_at"):
                 data["created_at"] = data["created_at"].isoformat()
@@ -135,6 +140,3 @@ class DatabaseManager:
             query = RefactorHistory.delete().where(RefactorHistory.id == id)
             rows_deleted = query.execute()
             return rows_deleted > 0
-
-
-
