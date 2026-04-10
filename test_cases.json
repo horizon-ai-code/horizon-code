@@ -1,0 +1,162 @@
+[
+  {
+    "id": 1,
+    "category": "Modern Java Syntax",
+    "name": "Boilerplate to Record",
+    "code": "class Point {\n    private final int x;\n    private final int y;\n    public Point(int x, int y) {\n        this.x = x;\n        this.y = y;\n    }\n    public int getX() { return x; }\n    public int getY() { return y; }\n}",
+    "instruction": "Refactor this boilerplate data class into a modern Java record.",
+    "purpose": "Tests if the Planner understands modern Java 14+ syntax or hallucinates old workarounds."
+  },
+  {
+    "id": 2,
+    "category": "Modern Java Syntax",
+    "name": "Switch to Switch Expression",
+    "code": "class Parser {\n    int parse(String type) {\n        int val;\n        switch(type) {\n            case \"A\": val = 1; break;\n            case \"B\": val = 2; break;\n            default: val = 0;\n        }\n        return val;\n    }\n}",
+    "instruction": "Refactor this traditional switch statement into a modern Java 14+ switch expression returning the value directly.",
+    "purpose": "Tests Planner's awareness of modern switch expressions."
+  },
+  {
+    "id": 3,
+    "category": "Modern Java Syntax",
+    "name": "Null Checks to Optional",
+    "code": "class Profile { String name; String getName() { return name; } }\nclass User { Profile profile; Profile getProfile() { return profile; } }\npublic class Service {\n    public String getUserName(User user) {\n        if (user != null && user.getProfile() != null) {\n            return user.getProfile().getName();\n        }\n        return \"Unknown\";\n    }\n}",
+    "instruction": "Refactor this nested null check using java.util.Optional.",
+    "purpose": "Tests ability to implement functional-style null safety."
+  },
+  {
+    "id": 4,
+    "category": "Modern Java Syntax",
+    "name": "Try-Catch to Try-With-Resources",
+    "code": "import java.io.*;\npublic class FileReaderApp {\n    public void readFile() throws Exception {\n        BufferedReader br = new BufferedReader(new FileReader(\"file.txt\"));\n        try {\n            br.readLine();\n        } finally {\n            br.close();\n        }\n    }\n}",
+    "instruction": "Refactor this code to use a try-with-resources statement to automatically close the BufferedReader.",
+    "purpose": "Tests syntactic modernization for resource management."
+  },
+  {
+    "id": 5,
+    "category": "Logical Traps",
+    "name": "The Multiple Inheritance Trap",
+    "code": "class Bird {}\nclass Machine {}\npublic class RoboBird {\n    Bird biology = new Bird();\n    Machine hardware = new Machine();\n}",
+    "instruction": "Make RoboBird directly inherit from both Bird and Machine using the 'extends' keyword. Do not use interfaces.",
+    "purpose": "Impossible instruction in Java. Tests if the Planner passes the trap downstream and if the Strict Generator crashes."
+  },
+  {
+    "id": 6,
+    "category": "Logical Traps",
+    "name": "Reassigning a Final Variable",
+    "code": "public class MathConfig {\n    public final double PI = 3.14;\n    public void updatePi() {\n    }\n}",
+    "instruction": "Write logic inside updatePi() to reassign the PI variable to 3.14159.",
+    "purpose": "Impossible instruction. Tests if the AI tries to violate the 'final' keyword constraint."
+  },
+  {
+    "id": 7,
+    "category": "Logical Traps",
+    "name": "Implementing a Class",
+    "code": "class Engine {\n    void start() {}\n}\npublic class Car {}",
+    "instruction": "Make the Car class use the 'implements' keyword on the Engine class.",
+    "purpose": "Grammar trap. 'implements' is for interfaces. Tests if the javalang AST parser gets fooled."
+  },
+  {
+    "id": 8,
+    "category": "Logical Traps",
+    "name": "Private Interface Methods",
+    "code": "public interface Worker {\n    void doWork();\n}",
+    "instruction": "Add a private helper method inside this interface called 'logWork' and call it from doWork().",
+    "purpose": "Pre-Java 9 trap. Tests if the AI uses default methods or fails to construct valid interface syntax."
+  },
+  {
+    "id": 9,
+    "category": "Architectural Reasoning",
+    "name": "Long Method Extraction",
+    "code": "public class Processor {\n    public void processOrder() {\n        System.out.println(\"Validating...\");\n        System.out.println(\"Calculating tax...\");\n        System.out.println(\"Saving to DB...\");\n        System.out.println(\"Sending Email...\");\n    }\n}",
+    "instruction": "Extract the validation, calculation, database, and email logic into four separate private helper methods.",
+    "purpose": "Stress-tests the Planner's context window and XML formatting with multi-step reasoning."
+  },
+  {
+    "id": 10,
+    "category": "Architectural Reasoning",
+    "name": "Deeply Nested Conditionals",
+    "code": "public class Logic {\n    public void execute(boolean a, boolean b) {\n        if (a) {\n            if (b) {\n                System.out.println(\"Success\");\n            } else {\n                System.out.println(\"Fail B\");\n            }\n        } else {\n            System.out.println(\"Fail A\");\n        }\n    }\n}",
+    "instruction": "Refactor these nested if-statements using early returns (guard clauses) to flatten the structure.",
+    "purpose": "Tests logical flow inversion and guard clause generation."
+  },
+  {
+    "id": 11,
+    "category": "Architectural Reasoning",
+    "name": "Singleton Pattern Implementation",
+    "code": "public class DatabaseConnection {\n    public DatabaseConnection() {\n    }\n}",
+    "instruction": "Refactor this class into a thread-safe Singleton pattern using a private constructor and a static getInstance method.",
+    "purpose": "Tests design pattern implementation capability."
+  },
+  {
+    "id": 12,
+    "category": "Architectural Reasoning",
+    "name": "Inheritance to Composition",
+    "code": "class Engine {\n    void start() {}\n}\npublic class Car extends Engine {\n    void drive() {\n        start();\n    }\n}",
+    "instruction": "Refactor Car to use composition instead of inheritance. Engine should be a private final field initialized in the Car constructor.",
+    "purpose": "Tests architectural refactoring and dependency injection concepts."
+  },
+  {
+    "id": 13,
+    "category": "Architectural Reasoning",
+    "name": "Builder Pattern",
+    "code": "public class User {\n    String name;\n    int age;\n    String email;\n    public User(String name, int age, String email) {\n        this.name = name;\n        this.age = age;\n        this.email = email;\n    }\n}",
+    "instruction": "Refactor this class to use a static inner Builder class for object instantiation.",
+    "purpose": "Stress-tests the Planner's ability to generate complex, verbose structural instructions."
+  },
+  {
+    "id": 14,
+    "category": "Architectural Reasoning",
+    "name": "Strategy Pattern Extraction",
+    "code": "public class Payment {\n    public void pay(String type) {\n        if (type.equals(\"Card\")) {\n            System.out.println(\"Card\");\n        } else if (type.equals(\"Cash\")) {\n            System.out.println(\"Cash\");\n        }\n    }\n}",
+    "instruction": "Refactor this if-else block using the Strategy Pattern by creating a PaymentStrategy interface and separate classes for Card and Cash.",
+    "purpose": "Tests multi-class generation within a single AST block."
+  },
+  {
+    "id": 15,
+    "category": "Algorithmic & Code Smells",
+    "name": "Magic Numbers to Constants",
+    "code": "public class MathUtils {\n    public double calculateCircleArea(double radius) {\n        return 3.14159 * radius * radius;\n    }\n}",
+    "instruction": "Extract the magic number 3.14159 into a private static final constant named PI.",
+    "purpose": "Tests simple variable extraction and modifier usage."
+  },
+  {
+    "id": 16,
+    "category": "Algorithmic & Code Smells",
+    "name": "For-loop to Streams API",
+    "code": "import java.util.*;\npublic class Filter {\n    public List<String> process() {\n        List<String> names = Arrays.asList(\"a\", \"b\", \"c\");\n        List<String> upper = new ArrayList<>();\n        for(String n : names) {\n            upper.add(n.toUpperCase());\n        }\n        return upper;\n    }\n}",
+    "instruction": "Refactor this for-loop to use the Java 8 Streams API to map and collect the strings.",
+    "purpose": "Tests declarative vs. imperative logic refactoring."
+  },
+  {
+    "id": 17,
+    "category": "Algorithmic & Code Smells",
+    "name": "String Concatenation in Loop",
+    "code": "public class StringUtils {\n    public String buildString(String[] words) {\n        String result = \"\";\n        for (String word : words) {\n            result += word;\n        }\n        return result;\n    }\n}",
+    "instruction": "Refactor this code to use a StringBuilder to prevent inefficient String instantiation in the loop.",
+    "purpose": "Tests memory-efficient algorithmic optimization."
+  },
+  {
+    "id": 18,
+    "category": "Algorithmic & Code Smells",
+    "name": "Encapsulation",
+    "code": "public class Account {\n    public double balance;\n}",
+    "instruction": "Encapsulate this class by making the balance field private and providing a getter and a setter.",
+    "purpose": "Tests basic OOP principles."
+  },
+  {
+    "id": 19,
+    "category": "Algorithmic & Code Smells",
+    "name": "Unused Variable Cleanup",
+    "code": "public class Calculator {\n    public void calculate() {\n        int a = 5;\n        int b = 10;\n        int c = 15;\n        System.out.println(a + b);\n    }\n}",
+    "instruction": "Remove any unused variables from this method.",
+    "purpose": "Tests precision and ability to delete unnecessary code without altering behavior."
+  },
+  {
+    "id": 20,
+    "category": "Algorithmic & Code Smells",
+    "name": "Adding Thread-Safety",
+    "code": "public class Counter {\n    private int count = 0;\n    public void increment() {\n        count++;\n    }\n}",
+    "instruction": "Refactor the increment method to be thread-safe.",
+    "purpose": "Tests implementation of synchronized keywords or AtomicInteger."
+  }
+]

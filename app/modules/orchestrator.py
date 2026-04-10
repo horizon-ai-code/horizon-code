@@ -336,3 +336,123 @@ class Orchestrator:
         )
 
         await client.send_status(role=role, content=message)
+
+    async def test_orchestration(
+        self, user_code: str, user_instruction: str
+    ) -> Dict[str, Any]:
+        current_code: str = user_code
+        current_instruction: str = user_instruction
+
+        # Iteration Control
+        max_iterations: int = 3
+        attempt_count: int = 0
+        is_valid_refactor: bool = False
+
+        # Array to store the history of each iteration
+        iteration_logs: List[Dict[str, str]] = []
+
+        while attempt_count < max_iterations:
+            attempt_count += 1
+            await self.agent_service.swap(self.model_config["planner"])
+
+            print(
+                f"[Planner] Generating plan & instructions (Attempt {attempt_count}/{max_iterations})..."
+            )
+
+            result: Dict[str, str] = await self.generate_plan_and_instruction(
+                current_code, current_instruction
+            )
+            instructions: str = result["instructions"]
+
+            print(f"[Planner] Plan generated: {result['plan']}")
+
+            await self.agent_service.swap(self.model_config["generator"])
+
+            print("[Generator] Refactoring code...")
+
+            refactored_code: Dict[str, str] = await self.generate_refactored_code(
+                current_code, instructions
+            )
+
+            print("[Generator] Refactor draft finished.")
+
+            # Store the current iteration's plan, instructions, and generated code
+            iteration_logs.append(
+                {
+                    "plan": result["plan"],
+                    "instructions": instructions,
+                    "generated_code": refactored_code["code"],
+                }
+            )
+
+            print("[Validator] Checking syntax...")
+
+            # Type is Dict[str, Any] because it contains bools, strings, and lists
+            syntax_verdict: Dict[str, Any] = self.validator.check_syntax(
+                refactored_code["code"]
+            )
+
+            if syntax_verdict["is_valid"]:
+                print("[Validator] Syntax passed.")
+
+                current_code = refactored_code["code"]
+                is_valid_refactor = True
+                break
+
+            print("[Validator] Errors detected.")
+
+            await self.agent_service.swap(self.model_config["judge"])
+
+            print("[Judge] Interpreting errors & generating fix instructions...")
+
+            judge_result: Dict[
+                str, str
+            ] = await self.interpret_errors_and_generate_instructions(
+                refactored_code["code"], syntax_verdict["errors"]
+            )
+
+            print("[Judge] Errors interpreted.")
+
+            current_code = refactored_code["code"]
+            current_instruction = judge_result["instructions"]
+
+        # Fallback Mechanism
+        if not is_valid_refactor:
+            current_code = user_code
+
+        print("[Validator] Checking complexity...")
+
+        complexity: Dict[str, Any] = self.validator.check_complexity(current_code)
+
+        # Optional[int] because complexity score can technically be None if the snippet is empty
+        complexity_score: Optional[int] = complexity["complexity_score"]
+
+        print("[Validator] Complexity measured.")
+
+        insights: Dict[str, str] = {}
+        if is_valid_refactor:
+            await self.agent_service.swap(self.model_config["judge"])
+
+            print("[Judge] Generating insights...")
+
+            insights = await self.generate_insights(
+                user_code, current_code, complexity_score
+            )
+        else:
+            insights = {
+                "insights": "Unable to refactor: the generated code remained too complex or contained persistent syntax errors after maximum attempts. Reverted to original code."
+            }
+
+        await self.agent_service.unload()
+
+        print("Orchestration finished.")
+
+        # Return the final structured data
+        return {
+            "num_of_iterations": attempt_count,
+            "passed": is_valid_refactor,
+            "refactored_code": current_code,
+            "cc": complexity_score,
+            "insights": insights["insights"],
+            "logs": iteration_logs,
+        }
