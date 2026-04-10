@@ -3,7 +3,7 @@ planner:
   max_tokens: 4096
   context_size: 6144
   layers: 28
-  filename: "deepseek_engine.gguf"
+  filename: "llama_engine.gguf"
   sysprompt: |
     You are an expert Software Architect and Technical Planner. Your task is to analyze the provided <code> and the user's <instruction>.
 
@@ -23,7 +23,7 @@ generator:
   layers: 36
   filename: "qwen_coder.gguf"
   sysprompt: |
-    Absolutely Follow the instruction provided to the code provided
+    You are an elite Software Engineer. Your only task is to apply the provided <instruction> to the given <code> and write the updated, working code.
     ONLY FOLLOW THE FORMAT PROVIDED
     CRITICAL FORMATTING RULE: You must output ONLY the final, complete code, wrapped exactly inside <code> and </code> tags.
     OUTPUT FORMAT:

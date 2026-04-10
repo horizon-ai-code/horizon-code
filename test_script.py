@@ -14,25 +14,12 @@ from app.modules.validator import Validator
 # e.g., from app.modules.agent_service import AgentService
 # e.g., from app.modules.validator import Validator
 
-TEST_SUITE_FILE = "refactoring_test_suite.json"
+TEST_SUITE_FILE = "test_cases.json"
 
 
-async def main():
-    print("Which configuration are you currently testing?")
-    print("1. deepseek_loose")
-    print("2. deepseek_strict")
-    print("3. qwen_loose")
-    print("4. qwen_strict")
-    choice = input("Enter the number of the configuration (1-4): ")
+async def main(name: str):
 
-    config_map = {
-        "1": "deepseek_loose",
-        "2": "deepseek_strict",
-        "3": "qwen_loose",
-        "4": "qwen_strict",
-    }
-    config_name = config_map.get(choice, "custom_run")
-    output_json = f"results_{config_name}.json"
+    output_json = f"results_{name}.json"
 
     # 1. Load the test suite
     if not os.path.exists(TEST_SUITE_FILE):
@@ -53,13 +40,13 @@ async def main():
         agent_service=agent_service, validator=validator, db=db
     )  # Modify this line to pass your actual dependencies
 
-    print(f"Loaded {len(tests)} tests. Starting execution for: {config_name}\n")
+    print(f"Loaded {len(tests)} tests. Starting execution for: {name}\n")
 
     all_results = []
 
     # 3. Run tests sequentially
     for i, test in enumerate(tests, 1):
-        print(f"[{i}/{len(tests)}] Running Test {test['id']}: {test['name']}...")
+        print(f"\n[{i}/{len(tests)}] Running Test {test['id']}: {test['name']}...\n")
         start_time = time.time()
 
         try:
@@ -111,4 +98,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(main("results_llama_loose"))
