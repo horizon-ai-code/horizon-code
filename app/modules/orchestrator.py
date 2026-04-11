@@ -153,6 +153,9 @@ class Orchestrator:
                 client=client, role=Role.Validator, message="Complexity measured."
             )
 
+            await tracker.stop_tracking()
+            performance_metrics = tracker.get_metrics()
+
             insights: Dict[str, str] = {}
             if is_valid_refactor:
                 await self.agent_service.swap(self.model_config["judge"])
@@ -162,15 +165,12 @@ class Orchestrator:
                 )
 
                 insights = await self.generate_insights(
-                    user_code, current_code, complexity_score
+                    user_code, current_code, complexity_score, performance_metrics
                 )
             else:
                 insights = {
                     "insights": "Unable to refactor: the generated code remained too complex or contained persistent syntax errors after maximum attempts. Reverted to original code."
                 }
-
-            await tracker.stop_tracking()
-            performance_metrics = tracker.get_metrics()
 
             await client.send_result(
                 final_code=current_code,
@@ -280,9 +280,22 @@ class Orchestrator:
         return result
 
     async def generate_insights(
-        self, user_code: str, refactored_code: str, cc: Optional[int]
+        self,
+        user_code: str,
+        refactored_code: str,
+        cc: Optional[int],
+        performance_metrics: Dict[str, float],
     ) -> Dict[str, str]:
-        prompt: str = f"<user_code>{user_code}</user_code>\n<refactored_code>{refactored_code}</refactored_code><cc>{cc}</cc>"
+        prompt: str = (
+            f"<user_code>{user_code}</user_code>\n"
+            f"<refactored_code>{refactored_code}</refactored_code>\n"
+            f"<cc>{cc}</cc>\n"
+            f"<performance>\n"
+            f"Avg GPU Utilization: {performance_metrics.get('avg_gpu_utilization')}% \n"
+            f"Avg GPU Memory: {performance_metrics.get('avg_gpu_memory_used') / (1024*1024*1024):.2f} GB ({performance_metrics.get('avg_gpu_memory')}%) \n"
+            f"Total Inference Time: {performance_metrics.get('inference_time')}s \n"
+            f"</performance>"
+        )
         query: List[ChatCompletionRequestMessage] = [
             {
                 "role": "system",

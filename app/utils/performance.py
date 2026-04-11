@@ -7,7 +7,8 @@ class PerformanceTracker:
     def __init__(self, interval: float = 0.5):
         self.interval = interval
         self._gpu_utilizations: List[float] = []
-        self._gpu_memory_usage: List[float] = []
+        self._gpu_memory_usage_percent: List[float] = []
+        self._gpu_memory_usage_used: List[float] = []
         self._start_time: float = 0
         self._total_inference_time: float = 0
         self._is_running = False
@@ -17,7 +18,8 @@ class PerformanceTracker:
     async def start_tracking(self):
         self._is_running = True
         self._gpu_utilizations = []
-        self._gpu_memory_usage = []
+        self._gpu_memory_usage_percent = []
+        self._gpu_memory_usage_used = []
         self._start_time = time.perf_counter()
         
         try:
@@ -57,7 +59,8 @@ class PerformanceTracker:
                     
                     self._gpu_utilizations.append(float(util.gpu))
                     # Memory usage as percentage
-                    self._gpu_memory_usage.append(float(mem.used) / float(mem.total) * 100.0)
+                    self._gpu_memory_usage_percent.append(float(mem.used) / float(mem.total) * 100.0)
+                    self._gpu_memory_usage_used.append(float(mem.used))
                 except pynvml.NVMLError as err:
                     print(f"[PerformanceTracker] NVML Error during polling: {err}")
                 
@@ -67,10 +70,12 @@ class PerformanceTracker:
 
     def get_metrics(self) -> Dict[str, float]:
         avg_util = sum(self._gpu_utilizations) / len(self._gpu_utilizations) if self._gpu_utilizations else 0
-        avg_mem = sum(self._gpu_memory_usage) / len(self._gpu_memory_usage) if self._gpu_memory_usage else 0
+        avg_mem_percent = sum(self._gpu_memory_usage_percent) / len(self._gpu_memory_usage_percent) if self._gpu_memory_usage_percent else 0
+        avg_mem_used = sum(self._gpu_memory_usage_used) / len(self._gpu_memory_usage_used) if self._gpu_memory_usage_used else 0
         
         return {
             "avg_gpu_utilization": round(avg_util, 2),
-            "avg_gpu_memory": round(avg_mem, 2),
+            "avg_gpu_memory": round(avg_mem_percent, 2),
+            "avg_gpu_memory_used": round(avg_mem_used, 2),
             "inference_time": round(self._total_inference_time, 2)
         }

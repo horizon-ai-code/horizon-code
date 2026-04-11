@@ -21,6 +21,7 @@ class HistoryDetail(BaseModel):
     complexity: Optional[int] = None
     avg_gpu_utilization: Optional[float] = None
     avg_gpu_memory: Optional[float] = None
+    avg_gpu_memory_used: Optional[float] = None
     inference_time: Optional[float] = None
     created_at: datetime
     logs: List[LogEntry]

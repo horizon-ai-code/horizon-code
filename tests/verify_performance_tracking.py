@@ -51,6 +51,7 @@ async def verify_performance_tracking():
     assert performance is not None
     assert "avg_gpu_utilization" in performance
     assert "avg_gpu_memory" in performance
+    assert "avg_gpu_memory_used" in performance
     assert "inference_time" in performance
     print(f"Metrics received by client: {performance}")
 
@@ -69,6 +70,7 @@ async def verify_performance_tracking():
     assert record.status == "Completed"
     assert record.avg_gpu_utilization == performance["avg_gpu_utilization"]
     assert record.avg_gpu_memory == performance["avg_gpu_memory"]
+    assert record.avg_gpu_memory_used == performance["avg_gpu_memory_used"]
     assert record.inference_time == performance["inference_time"]
     print(f"Database record updated successfully with metrics: {record.avg_gpu_utilization}, {record.avg_gpu_memory}, {record.inference_time}")
 

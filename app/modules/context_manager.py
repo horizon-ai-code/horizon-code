@@ -25,6 +25,7 @@ class RefactorHistory(peewee.Model):
     complexity = peewee.IntegerField(null=True)
     avg_gpu_utilization = peewee.FloatField(null=True)
     avg_gpu_memory = peewee.FloatField(null=True)
+    avg_gpu_memory_used = peewee.FloatField(null=True)
     inference_time = peewee.FloatField(null=True)
     created_at = peewee.DateTimeField(default=datetime.datetime.now)
 
@@ -100,6 +101,7 @@ class DatabaseManager:
                 complexity=complexity,
                 avg_gpu_utilization=performance_metrics.get("avg_gpu_utilization"),
                 avg_gpu_memory=performance_metrics.get("avg_gpu_memory"),
+                avg_gpu_memory_used=performance_metrics.get("avg_gpu_memory_used"),
                 inference_time=performance_metrics.get("inference_time"),
             ).where(RefactorHistory.id == id)
             query.execute()
