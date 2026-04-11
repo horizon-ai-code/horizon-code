@@ -31,6 +31,11 @@ class ClientConnection:
         message: dict = {"type": "status", "role": role, "content": content}
         await self.websocket.send_json(message)
 
+    async def send_halt_notification(self) -> None:
+        """Notifies the frontend that the orchestration has been halted."""
+        message: dict = {"type": "status", "role": Role.System, "content": "Orchestration halted by user."}
+        await self.websocket.send_json(message)
+
     async def send_result(
         self,
         final_code: str,

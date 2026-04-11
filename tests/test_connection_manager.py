@@ -1,0 +1,26 @@
+import unittest
+from unittest.mock import AsyncMock, MagicMock
+from app.modules.connection_manager import ClientConnection
+from app.utils.types import Role
+
+class TestConnectionManager(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.mock_websocket = AsyncMock()
+        self.mock_db = MagicMock()
+        self.client_connection = ClientConnection(self.mock_websocket, self.mock_db)
+
+    async def test_send_halt_notification(self):
+        """Test that send_halt_notification sends the correct message through WebSocket."""
+        # 1. Action: Call the new method (which doesn't exist yet)
+        await self.client_connection.send_halt_notification()
+
+        # 2. Verification: Check that send_json was called with the expected payload
+        expected_message = {
+            "type": "status",
+            "role": Role.System,
+            "content": "Orchestration halted by user."
+        }
+        self.mock_websocket.send_json.assert_awaited_once_with(expected_message)
+
+if __name__ == '__main__':
+    unittest.main()

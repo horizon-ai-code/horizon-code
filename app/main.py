@@ -64,38 +64,81 @@ async def entrypoint(websocket: WebSocket) -> None:
     client_conn: ClientConnection = connection.create_websocket_connection(
         websocket=websocket
     )
+    current_task: Optional[asyncio.Task] = None
+
+    async def run_orchestration(validated_data: RefactorRequest):
+        try:
+            # 1. New request cleanup
+            client_conn.reset_id()
+            await client_conn.send_connection_id()
+
+            # 2. Sequential processing across ALL clients via global lock
+            async with orchestration_lock:
+                await orchestrator.execute_orchestration(
+                    client=client_conn,
+                    user_code=validated_data.code,
+                    user_instruction=validated_data.user_instruction,
+                )
+        except asyncio.CancelledError:
+            await client_conn.send_halt_notification()
+            raise
+        except Exception as e:
+            # Critical orchestration error
+            print(f"Orchestration Task Failure (ID: {client_conn.id}): {e}")
 
     try:
         while True:
-            validated: Optional[RefactorRequest] = await get_validated_data(
-                websocket=websocket
-            )
-            if not validated:
+            # 1. Listen for raw messages
+            try:
+                data = await websocket.receive_json()
+            except (json.JSONDecodeError, TypeError, ValueError) as e:
+                await websocket.send_json(
+                    {"type": "error", "message": "Malformed JSON payload", "details": str(e)}
+                )
                 continue
 
+            # 2. Handle 'halt' message
+            if data.get("type") == "halt":
+                if current_task and not current_task.done():
+                    agent_service.stop()
+                    print(f"Halt triggered for session {client_conn.id}")
+                continue
+
+            # 3. Handle RefactorRequest (backward compatibility: default type is refactor)
+            try:
+                validated = RefactorRequest(**data)
+            except ValidationError as e:
+                await websocket.send_json(
+                    {"type": "error", "message": "Invalid data format", "details": e.errors()}
+                )
+                continue
+
+            # 4. Enforce one active orchestration per websocket connection
+            if current_task and not current_task.done():
+                await client_conn.send_status(
+                    role=Role.System,
+                    content="A refactor is already in progress. Please halt it first if you want to start a new one.",
+                )
+                continue
+
+            # 5. Global lock status check (proactive notification)
             if orchestration_lock.locked():
                 await client_conn.send_status(
                     role=Role.System,
                     content="Server is currently busy with another request. Your request is in the queue and will start automatically when ready...",
                 )
 
-            # Ensure only one refactor request is processed at a time globally
-            async with orchestration_lock:
-                # Every new request in the same connection gets a unique ID
-                client_conn.reset_id()
-                await client_conn.send_connection_id()
-
-                await orchestrator.execute_orchestration(
-                    client=client_conn,
-                    user_code=validated.code,
-                    user_instruction=validated.user_instruction,
-                )
+            # 6. Offload orchestration to a background task
+            current_task = asyncio.create_task(run_orchestration(validated))
 
     except WebSocketDisconnect as e:
         print(f"Connection disconnected: {e}")
     except Exception as e:
         print(f"An error occurred: {e}")
     finally:
+        if current_task and not current_task.done():
+            agent_service.stop()
+
         # Only unload if no one else is currently orchestrating
         if not orchestration_lock.locked():
             await agent_service.unload()
@@ -135,36 +178,3 @@ async def delete_history_detail(
         "status": "history_deleted",
         "message": f"Refactor history {history_id} deleted",
     }
-
-
-async def get_validated_data(websocket: WebSocket) -> Optional[RefactorRequest]:
-    """
-    Handles raw reception, JSON decoding, and Pydantic validation.
-    Returns None if any step fails, keeping the connection alive.
-    """
-    try:
-        # Step 1: Try to receive and decode raw JSON
-        # This prevents crashes from empty or malformed strings (Postman errors)
-        data = await websocket.receive_json()
-
-        # Step 2: Try to validate against the Pydantic model
-        return RefactorRequest(**data)
-
-    except WebSocketDisconnect:
-        raise
-
-    except ValidationError as e:
-        await websocket.send_json(
-            {"type": "error", "message": "Invalid data format", "details": e.errors()}
-        )
-
-    except (json.JSONDecodeError, TypeError, ValueError) as e:
-        await websocket.send_json(
-            {"type": "error", "message": "Malformed JSON payload", "details": str(e)}
-        )
-
-    except Exception as e:
-        # Catch-all for unexpected message issues
-        print(f"Non-fatal message error: {e}")
-
-    return None

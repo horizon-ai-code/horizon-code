@@ -17,6 +17,7 @@ db = peewee.SqliteDatabase(DB_PATH, pragmas={"journal_mode": "wal"})
 # 2. Define the Database Schema
 class RefactorHistory(peewee.Model):
     id = peewee.UUIDField(primary_key=True)
+    status = peewee.CharField(default="Processing")
     user_instruction = peewee.TextField()
     original_code = peewee.TextField()
     refactored_code = peewee.TextField(null=True)
@@ -74,6 +75,11 @@ class DatabaseManager:
                 content=content,
             )
 
+    def mark_as_halted(self, id: str) -> None:
+        """Updates session status to Halted."""
+        with db.atomic():
+            RefactorHistory.update(status="Halted").where(RefactorHistory.id == id).execute()
+
     def complete_session(
         self,
         id: str,
@@ -84,6 +90,7 @@ class DatabaseManager:
         """Updates an existing session record with final results."""
         with db.atomic():
             query = RefactorHistory.update(
+                status="Completed",
                 refactored_code=refactored_code,
                 insights=insights,
                 complexity=complexity,
