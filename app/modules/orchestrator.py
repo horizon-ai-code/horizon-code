@@ -1,3 +1,4 @@
+import asyncio
 import re
 from typing import Any, Dict, List, Optional
 
@@ -9,6 +10,7 @@ from app.modules.connection_manager import ClientConnection
 from app.modules.context_manager import DatabaseManager
 from app.modules.validator import Validator
 from app.utils.paths import MODELS_CONFIG_PATH
+from app.utils.performance import PerformanceTracker
 from app.utils.types import Role
 
 
@@ -32,144 +34,170 @@ class Orchestrator:
     async def execute_orchestration(
         self, client: ClientConnection, user_code: str, user_instruction: str
     ) -> None:
-        # 1. Initialize the session in the database immediately
-        self.db.create_session(
-            id=client.id, instruction=user_instruction, original_code=user_code
-        )
-
-        current_code: str = user_code
-        current_instruction: str = user_instruction
-
-        # Iteration Control
-        max_iterations: int = 3
-        attempt_count: int = 0
-        is_valid_refactor: bool = False
-
-        while attempt_count < max_iterations:
-            attempt_count += 1
-            await self.agent_service.swap(self.model_config["planner"])
-
-            await self._notify(
-                client=client,
-                role=Role.Planner,
-                message=f"Generating plan & instructions (Attempt {attempt_count}/{max_iterations})...",
+        tracker = PerformanceTracker()
+        await tracker.start_tracking()
+        try:
+            # 1. Initialize the session in the database immediately
+            self.db.create_session(
+                id=client.id, instruction=user_instruction, original_code=user_code
             )
 
-            result: Dict[str, str] = await self.generate_plan_and_instruction(
-                current_code, current_instruction
+            # Measure Original Complexity
+            orig_complexity_res: Dict[str, Any] = self.validator.check_complexity(
+                user_code
             )
-            instructions: str = result["instructions"]
+            original_complexity_score: Optional[int] = orig_complexity_res[
+                "complexity_score"
+            ]
 
-            await self._notify(
-                client=client,
-                role=Role.Planner,
-                message=f"Plan generated: {result['plan']}",
-                content=result["plan"],
-            )
+            current_code: str = user_code
+            current_instruction: str = user_instruction
 
-            # print(f"plan: {result['plan']}")
-            # print(f"instruction: {result['instructions']}")
+            # Iteration Control
+            max_iterations: int = 3
+            attempt_count: int = 0
+            is_valid_refactor: bool = False
 
-            await self.agent_service.swap(self.model_config["generator"])
+            while attempt_count < max_iterations:
+                attempt_count += 1
+                await self.agent_service.swap(self.model_config["planner"])
 
-            await self._notify(
-                client=client, role=Role.Generator, message="Refactoring code..."
-            )
-
-            refactored_code: Dict[str, str] = await self.generate_refactored_code(
-                current_code, instructions
-            )
-            await self._notify(
-                client=client,
-                role=Role.Generator,
-                message="Refactor draft finished.",
-                content=refactored_code["code"],
-            )
-
-            await self._notify(
-                client=client, role=Role.Validator, message="Checking syntax..."
-            )
-
-            # Type is Dict[str, Any] because it contains bools, strings, and lists
-            syntax_verdict: Dict[str, Any] = self.validator.check_syntax(
-                refactored_code["code"]
-            )
-
-            if syntax_verdict["is_valid"]:
                 await self._notify(
-                    client=client, role=Role.Validator, message="Syntax passed."
+                    client=client,
+                    role=Role.Planner,
+                    message=f"Generating plan & instructions (Attempt {attempt_count}/{max_iterations})...",
+                )
+
+                result: Dict[str, str] = await self.generate_plan_and_instruction(
+                    current_code, current_instruction
+                )
+                instructions: str = result["instructions"]
+
+                await self._notify(
+                    client=client,
+                    role=Role.Planner,
+                    message=f"Plan generated: {result['plan']}",
+                    content=result["plan"],
+                )
+
+                # print(f"plan: {result['plan']}")
+                # print(f"instruction: {result['instructions']}")
+
+                await self.agent_service.swap(self.model_config["generator"])
+
+                await self._notify(
+                    client=client, role=Role.Generator, message="Refactoring code..."
+                )
+
+                refactored_code: Dict[str, str] = await self.generate_refactored_code(
+                    current_code, instructions
+                )
+                await self._notify(
+                    client=client,
+                    role=Role.Generator,
+                    message="Refactor draft finished.",
+                    content=refactored_code["code"],
+                )
+
+                await self._notify(
+                    client=client, role=Role.Validator, message="Checking syntax..."
+                )
+
+                # Type is Dict[str, Any] because it contains bools, strings, and lists
+                syntax_verdict: Dict[str, Any] = self.validator.check_syntax(
+                    refactored_code["code"]
+                )
+
+                if syntax_verdict["is_valid"]:
+                    await self._notify(
+                        client=client, role=Role.Validator, message="Syntax passed."
+                    )
+
+                    current_code = refactored_code["code"]
+                    is_valid_refactor = True
+                    break
+
+                await self._notify(
+                    client=client, role=Role.Validator, message="Errors detected."
+                )
+
+                await self.agent_service.swap(self.model_config["judge"])
+
+                await self._notify(
+                    client=client,
+                    role=Role.Judge,
+                    message="Interpreting errors & generating fix instructions...",
+                )
+
+                judge_result: Dict[
+                    str, str
+                ] = await self.interpret_errors_and_generate_instructions(
+                    refactored_code["code"], syntax_verdict["errors"]
+                )
+                await self._notify(
+                    client=client,
+                    role=Role.Judge,
+                    message="Errors interpreted.",
+                    content=judge_result["interpretation"],
                 )
 
                 current_code = refactored_code["code"]
-                is_valid_refactor = True
-                break
+                current_instruction = judge_result["instructions"]
+
+            # Fallback Mechanism
+            if not is_valid_refactor:
+                current_code = user_code
 
             await self._notify(
-                client=client, role=Role.Validator, message="Errors detected."
+                client=client, role=Role.Validator, message="Checking complexity..."
             )
 
-            await self.agent_service.swap(self.model_config["judge"])
+            complexity: Dict[str, Any] = self.validator.check_complexity(current_code)
+            refactored_complexity_score: Optional[int] = complexity["complexity_score"]
 
             await self._notify(
-                client=client,
-                role=Role.Judge,
-                message="Interpreting errors & generating fix instructions...",
+                client=client, role=Role.Validator, message="Complexity measured."
             )
 
-            judge_result: Dict[
-                str, str
-            ] = await self.interpret_errors_and_generate_instructions(
-                refactored_code["code"], syntax_verdict["errors"]
+            await tracker.stop_tracking()
+            performance_metrics = tracker.get_metrics()
+
+            insights: Dict[str, str] = {}
+            if is_valid_refactor:
+                await self.agent_service.swap(self.model_config["judge"])
+
+                await self._notify(
+                    client=client, role=Role.Judge, message="Generating insights..."
+                )
+
+                insights = await self.generate_insights(
+                    user_code,
+                    current_code,
+                    original_complexity_score,
+                    refactored_complexity_score,
+                )
+            else:
+                insights = {
+                    "insights": "Unable to refactor: the generated code remained too complex or contained persistent syntax errors after maximum attempts. Reverted to original code."
+                }
+
+            await client.send_result(
+                final_code=current_code,
+                insights=insights["insights"],
+                original_complexity=original_complexity_score,
+                refactored_complexity=refactored_complexity_score,
+                performance_metrics=performance_metrics,
             )
-            await self._notify(
-                client=client,
-                role=Role.Judge,
-                message="Errors interpreted.",
-                content=judge_result["interpretation"],
-            )
-
-            current_code = refactored_code["code"]
-            current_instruction = judge_result["instructions"]
-
-        # Fallback Mechanism
-        if not is_valid_refactor:
-            current_code = user_code
-
-        await self._notify(
-            client=client, role=Role.Validator, message="Checking complexity..."
-        )
-
-        complexity: Dict[str, Any] = self.validator.check_complexity(current_code)
-
-        # Optional[int] because complexity score can technically be None if the snippet is empty
-        complexity_score: Optional[int] = complexity["complexity_score"]
-
-        await self._notify(
-            client=client, role=Role.Validator, message="Complexity measured."
-        )
-
-        insights: Dict[str, str] = {}
-        if is_valid_refactor:
-            await self.agent_service.swap(self.model_config["judge"])
-
-            await self._notify(
-                client=client, role=Role.Judge, message="Generating insights..."
-            )
-
-            insights = await self.generate_insights(
-                user_code, current_code, complexity_score
-            )
-        else:
-            insights = {
-                "insights": "Unable to refactor: the generated code remained too complex or contained persistent syntax errors after maximum attempts. Reverted to original code."
-            }
-
-        await client.send_result(
-            final_code=current_code,
-            insights=insights["insights"],
-            complexity=complexity_score,
-        )
-        await self.agent_service.unload()
+        except asyncio.CancelledError:
+            await tracker.stop_tracking()
+            self.db.mark_as_halted(client.id)
+            await self._notify(client, Role.System, "Process halted.")
+            raise
+        except Exception as e:
+            await tracker.stop_tracking()
+            raise e
+        finally:
+            await self.agent_service.unload()
 
         print("Orchestration finished.")
 
@@ -262,9 +290,19 @@ class Orchestrator:
         return result
 
     async def generate_insights(
-        self, user_code: str, refactored_code: str, cc: Optional[int]
+        self,
+        user_code: str,
+        refactored_code: str,
+        original_complexity: Optional[int],
+        refactored_complexity: Optional[int],
     ) -> Dict[str, str]:
-        prompt: str = f"<user_code>{user_code}</user_code>\n<refactored_code>{refactored_code}</refactored_code><cc>{cc}</cc>"
+
+        prompt: str = (
+            f"<user_code>{user_code}</user_code>\n"
+            f"<refactored_code>{refactored_code}</refactored_code>\n"
+            f"<original_cc>{original_complexity}</original_cc>\n"
+            f"<refactored_cc>{refactored_complexity}</refactored_cc>\n"
+        )
         query: List[ChatCompletionRequestMessage] = [
             {
                 "role": "system",

@@ -31,18 +31,27 @@ class ClientConnection:
         message: dict = {"type": "status", "role": role, "content": content}
         await self.websocket.send_json(message)
 
+    async def send_halt_notification(self) -> None:
+        """Notifies the frontend that the orchestration has been halted."""
+        message: dict = {"type": "status", "role": Role.System, "content": "Orchestration halted by user."}
+        await self.websocket.send_json(message)
+
     async def send_result(
         self,
         final_code: str,
         insights: str,
-        complexity: Optional[int],
+        original_complexity: Optional[int],
+        refactored_complexity: Optional[int],
+        performance_metrics: dict,
     ):
         # 1. Update the existing session record with final results
         self.db.complete_session(
             id=self.id,
             refactored_code=final_code,
             insights=insights,
-            complexity=complexity,
+            original_complexity=original_complexity,
+            refactored_complexity=refactored_complexity,
+            performance_metrics=performance_metrics,
         )
 
 
@@ -51,8 +60,10 @@ class ClientConnection:
             "type": "result",
             "id": self.id,
             "code": final_code,
-            "complexity": complexity,
+            "original_complexity": original_complexity,
+            "refactored_complexity": refactored_complexity,
             "insights": insights,
+            "performance": performance_metrics,
         }
         await self.websocket.send_json(message)
 

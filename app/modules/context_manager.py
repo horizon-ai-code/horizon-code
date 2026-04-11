@@ -17,11 +17,17 @@ db = peewee.SqliteDatabase(DB_PATH, pragmas={"journal_mode": "wal"})
 # 2. Define the Database Schema
 class RefactorHistory(peewee.Model):
     id = peewee.UUIDField(primary_key=True)
+    status = peewee.CharField(default="Processing")
     user_instruction = peewee.TextField()
     original_code = peewee.TextField()
     refactored_code = peewee.TextField(null=True)
     insights = peewee.TextField(null=True)
-    complexity = peewee.IntegerField(null=True)
+    original_complexity = peewee.IntegerField(null=True)
+    refactored_complexity = peewee.IntegerField(null=True)
+    avg_gpu_utilization = peewee.FloatField(null=True)
+    avg_gpu_memory = peewee.FloatField(null=True)
+    avg_gpu_memory_used = peewee.FloatField(null=True)
+    inference_time = peewee.FloatField(null=True)
     created_at = peewee.DateTimeField(default=datetime.datetime.now)
 
     class Meta:
@@ -74,19 +80,34 @@ class DatabaseManager:
                 content=content,
             )
 
+    def mark_as_halted(self, id: str) -> None:
+        """Updates session status to Halted."""
+        with db.atomic():
+            RefactorHistory.update(status="Halted").where(
+                RefactorHistory.id == id
+            ).execute()
+
     def complete_session(
         self,
         id: str,
         refactored_code: str,
         insights: str,
-        complexity: Optional[int],
+        original_complexity: Optional[int],
+        refactored_complexity: Optional[int],
+        performance_metrics: Dict[str, float],
     ) -> None:
         """Updates an existing session record with final results."""
         with db.atomic():
             query = RefactorHistory.update(
+                status="Completed",
                 refactored_code=refactored_code,
                 insights=insights,
-                complexity=complexity,
+                original_complexity=original_complexity,
+                refactored_complexity=refactored_complexity,
+                avg_gpu_utilization=performance_metrics.get("avg_gpu_utilization"),
+                avg_gpu_memory=performance_metrics.get("avg_gpu_memory"),
+                avg_gpu_memory_used=performance_metrics.get("avg_gpu_memory_used"),
+                inference_time=performance_metrics.get("inference_time"),
             ).where(RefactorHistory.id == id)
             query.execute()
 
@@ -94,10 +115,11 @@ class DatabaseManager:
         """
         Fetches all record IDs and instructions from the refactor history.
         Ordered by the most recent first.
+        Only returns sessions that have been successfully completed.
         """
         query = RefactorHistory.select(
             RefactorHistory.id, RefactorHistory.user_instruction
-        ).order_by(RefactorHistory.created_at.desc())
+        ).where(RefactorHistory.status == "Completed").order_by(RefactorHistory.created_at.desc())
 
         return [
             {"id": str(record.id), "user_instruction": record.user_instruction}
