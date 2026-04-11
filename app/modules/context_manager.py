@@ -83,7 +83,9 @@ class DatabaseManager:
     def mark_as_halted(self, id: str) -> None:
         """Updates session status to Halted."""
         with db.atomic():
-            RefactorHistory.update(status="Halted").where(RefactorHistory.id == id).execute()
+            RefactorHistory.update(status="Halted").where(
+                RefactorHistory.id == id
+            ).execute()
 
     def complete_session(
         self,
@@ -113,10 +115,11 @@ class DatabaseManager:
         """
         Fetches all record IDs and instructions from the refactor history.
         Ordered by the most recent first.
+        Only returns sessions that have been successfully completed.
         """
         query = RefactorHistory.select(
             RefactorHistory.id, RefactorHistory.user_instruction
-        ).order_by(RefactorHistory.created_at.desc())
+        ).where(RefactorHistory.status == "Completed").order_by(RefactorHistory.created_at.desc())
 
         return [
             {"id": str(record.id), "user_instruction": record.user_instruction}

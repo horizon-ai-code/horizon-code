@@ -1,5 +1,5 @@
-import re
 import asyncio
+import re
 from typing import Any, Dict, List, Optional
 
 import yaml
@@ -43,8 +43,12 @@ class Orchestrator:
             )
 
             # Measure Original Complexity
-            orig_complexity_res: Dict[str, Any] = self.validator.check_complexity(user_code)
-            original_complexity_score: Optional[int] = orig_complexity_res["complexity_score"]
+            orig_complexity_res: Dict[str, Any] = self.validator.check_complexity(
+                user_code
+            )
+            original_complexity_score: Optional[int] = orig_complexity_res[
+                "complexity_score"
+            ]
 
             current_code: str = user_code
             current_instruction: str = user_instruction
@@ -171,7 +175,6 @@ class Orchestrator:
                     current_code,
                     original_complexity_score,
                     refactored_complexity_score,
-                    performance_metrics,
                 )
             else:
                 insights = {
@@ -292,24 +295,13 @@ class Orchestrator:
         refactored_code: str,
         original_complexity: Optional[int],
         refactored_complexity: Optional[int],
-        performance_metrics: Dict[str, float],
     ) -> Dict[str, str]:
-        # Ensure we have default values to avoid TypeError: unsupported operand type(s) for /: 'NoneType' and 'int'
-        gpu_util = performance_metrics.get("avg_gpu_utilization", 0)
-        gpu_mem_percent = performance_metrics.get("avg_gpu_memory", 0)
-        gpu_mem_used = performance_metrics.get("avg_gpu_memory_used", 0)
-        inf_time = performance_metrics.get("inference_time", 0)
 
         prompt: str = (
             f"<user_code>{user_code}</user_code>\n"
             f"<refactored_code>{refactored_code}</refactored_code>\n"
             f"<original_cc>{original_complexity}</original_cc>\n"
             f"<refactored_cc>{refactored_complexity}</refactored_cc>\n"
-            f"<performance>\n"
-            f"Avg GPU Utilization: {gpu_util}% \n"
-            f"Avg GPU Memory: {gpu_mem_used / (1024*1024*1024):.2f} GB ({gpu_mem_percent}%) \n"
-            f"Total Inference Time: {inf_time}s \n"
-            f"</performance>"
         )
         query: List[ChatCompletionRequestMessage] = [
             {
