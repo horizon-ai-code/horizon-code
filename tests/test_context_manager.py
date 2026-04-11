@@ -52,7 +52,7 @@ class TestContextManager(unittest.TestCase):
         session_id = str(uuid.uuid4())
         self.db_manager.create_session(session_id, "instruction", "original code")
         
-        self.db_manager.complete_session(session_id, "refactored", "insights", 10)
+        self.db_manager.complete_session(session_id, "refactored", "insights", 10, {})
         
         session = RefactorHistory.get(RefactorHistory.id == session_id)
         self.assertEqual(session.status, "Completed")
