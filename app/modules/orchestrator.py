@@ -10,6 +10,7 @@ from app.modules.connection_manager import ClientConnection
 from app.modules.context_manager import DatabaseManager
 from app.modules.validator import Validator
 from app.utils.paths import MODELS_CONFIG_PATH
+from app.utils.performance import PerformanceTracker
 from app.utils.types import Role
 
 
@@ -33,6 +34,8 @@ class Orchestrator:
     async def execute_orchestration(
         self, client: ClientConnection, user_code: str, user_instruction: str
     ) -> None:
+        tracker = PerformanceTracker()
+        await tracker.start_tracking()
         try:
             # 1. Initialize the session in the database immediately
             self.db.create_session(
@@ -166,15 +169,23 @@ class Orchestrator:
                     "insights": "Unable to refactor: the generated code remained too complex or contained persistent syntax errors after maximum attempts. Reverted to original code."
                 }
 
+            await tracker.stop_tracking()
+            performance_metrics = tracker.get_metrics()
+
             await client.send_result(
                 final_code=current_code,
                 insights=insights["insights"],
                 complexity=complexity_score,
+                performance_metrics=performance_metrics,
             )
         except asyncio.CancelledError:
+            await tracker.stop_tracking()
             self.db.mark_as_halted(client.id)
             await self._notify(client, Role.System, "Process halted.")
             raise
+        except Exception as e:
+            await tracker.stop_tracking()
+            raise e
         finally:
             await self.agent_service.unload()
 
