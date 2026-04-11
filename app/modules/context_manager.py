@@ -22,7 +22,8 @@ class RefactorHistory(peewee.Model):
     original_code = peewee.TextField()
     refactored_code = peewee.TextField(null=True)
     insights = peewee.TextField(null=True)
-    complexity = peewee.IntegerField(null=True)
+    original_complexity = peewee.IntegerField(null=True)
+    refactored_complexity = peewee.IntegerField(null=True)
     avg_gpu_utilization = peewee.FloatField(null=True)
     avg_gpu_memory = peewee.FloatField(null=True)
     avg_gpu_memory_used = peewee.FloatField(null=True)
@@ -89,7 +90,8 @@ class DatabaseManager:
         id: str,
         refactored_code: str,
         insights: str,
-        complexity: Optional[int],
+        original_complexity: Optional[int],
+        refactored_complexity: Optional[int],
         performance_metrics: Dict[str, float],
     ) -> None:
         """Updates an existing session record with final results."""
@@ -98,7 +100,8 @@ class DatabaseManager:
                 status="Completed",
                 refactored_code=refactored_code,
                 insights=insights,
-                complexity=complexity,
+                original_complexity=original_complexity,
+                refactored_complexity=refactored_complexity,
                 avg_gpu_utilization=performance_metrics.get("avg_gpu_utilization"),
                 avg_gpu_memory=performance_metrics.get("avg_gpu_memory"),
                 avg_gpu_memory_used=performance_metrics.get("avg_gpu_memory_used"),

@@ -42,6 +42,10 @@ class Orchestrator:
                 id=client.id, instruction=user_instruction, original_code=user_code
             )
 
+            # Measure Original Complexity
+            orig_complexity_res: Dict[str, Any] = self.validator.check_complexity(user_code)
+            original_complexity_score: Optional[int] = orig_complexity_res["complexity_score"]
+
             current_code: str = user_code
             current_instruction: str = user_instruction
 
@@ -145,9 +149,7 @@ class Orchestrator:
             )
 
             complexity: Dict[str, Any] = self.validator.check_complexity(current_code)
-
-            # Optional[int] because complexity score can technically be None if the snippet is empty
-            complexity_score: Optional[int] = complexity["complexity_score"]
+            refactored_complexity_score: Optional[int] = complexity["complexity_score"]
 
             await self._notify(
                 client=client, role=Role.Validator, message="Complexity measured."
@@ -165,7 +167,11 @@ class Orchestrator:
                 )
 
                 insights = await self.generate_insights(
-                    user_code, current_code, complexity_score, performance_metrics
+                    user_code,
+                    current_code,
+                    original_complexity_score,
+                    refactored_complexity_score,
+                    performance_metrics,
                 )
             else:
                 insights = {
@@ -175,7 +181,8 @@ class Orchestrator:
             await client.send_result(
                 final_code=current_code,
                 insights=insights["insights"],
-                complexity=complexity_score,
+                original_complexity=original_complexity_score,
+                refactored_complexity=refactored_complexity_score,
                 performance_metrics=performance_metrics,
             )
         except asyncio.CancelledError:
@@ -283,7 +290,8 @@ class Orchestrator:
         self,
         user_code: str,
         refactored_code: str,
-        cc: Optional[int],
+        original_complexity: Optional[int],
+        refactored_complexity: Optional[int],
         performance_metrics: Dict[str, float],
     ) -> Dict[str, str]:
         # Ensure we have default values to avoid TypeError: unsupported operand type(s) for /: 'NoneType' and 'int'
@@ -295,7 +303,8 @@ class Orchestrator:
         prompt: str = (
             f"<user_code>{user_code}</user_code>\n"
             f"<refactored_code>{refactored_code}</refactored_code>\n"
-            f"<cc>{cc}</cc>\n"
+            f"<original_cc>{original_complexity}</original_cc>\n"
+            f"<refactored_cc>{refactored_complexity}</refactored_cc>\n"
             f"<performance>\n"
             f"Avg GPU Utilization: {gpu_util}% \n"
             f"Avg GPU Memory: {gpu_mem_used / (1024*1024*1024):.2f} GB ({gpu_mem_percent}%) \n"

@@ -40,7 +40,8 @@ class ClientConnection:
         self,
         final_code: str,
         insights: str,
-        complexity: Optional[int],
+        original_complexity: Optional[int],
+        refactored_complexity: Optional[int],
         performance_metrics: dict,
     ):
         # 1. Update the existing session record with final results
@@ -48,7 +49,8 @@ class ClientConnection:
             id=self.id,
             refactored_code=final_code,
             insights=insights,
-            complexity=complexity,
+            original_complexity=original_complexity,
+            refactored_complexity=refactored_complexity,
             performance_metrics=performance_metrics,
         )
 
@@ -58,7 +60,8 @@ class ClientConnection:
             "type": "result",
             "id": self.id,
             "code": final_code,
-            "complexity": complexity,
+            "original_complexity": original_complexity,
+            "refactored_complexity": refactored_complexity,
             "insights": insights,
             "performance": performance_metrics,
         }

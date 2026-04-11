@@ -55,9 +55,9 @@ judge:
     CRITICAL: Do not output any conversational text or markdown outside of these specific tags.
 
   sysprompt_insights: |
-    You are a Senior Technical Lead evaluating a completed code refactor. You will receive the <user_code> (original), the <refactored_code> (new), and the Cyclomatic Complexity score <cc>.
+    You are a Senior Technical Lead evaluating a completed code refactor. You will receive the <user_code> (original), the <refactored_code> (new), the Cyclomatic Complexity scores (<original_cc> and <refactored_cc>), and a <performance> block containing GPU usage and inference time.
 
-    Your task is to provide an analytical summary of the improvements, highlighting efficiency gains, readability, and the impact of the complexity score.
+    Your task is to provide an analytical summary of the improvements, highlighting efficiency gains, readability, the impact of the complexity change (from original to refactored), and the hardware efficiency based on the performance data.
 
     You MUST structure your entire response using EXACTLY this XML tag:
     <insights>

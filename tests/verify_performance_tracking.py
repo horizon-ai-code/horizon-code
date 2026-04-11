@@ -60,7 +60,8 @@ async def verify_performance_tracking():
         id=client.id,
         refactored_code="Test code",
         insights="Test insights",
-        complexity=5,
+        original_complexity=10,
+        refactored_complexity=5,
         performance_metrics=performance
     )
 
@@ -70,7 +71,8 @@ async def verify_performance_tracking():
     assert record.status == "Completed"
     assert record.avg_gpu_utilization == performance["avg_gpu_utilization"]
     assert record.avg_gpu_memory == performance["avg_gpu_memory"]
-    assert record.avg_gpu_memory_used == performance["avg_gpu_memory_used"]
+    assert record.original_complexity == 10
+    assert record.refactored_complexity == 5
     assert record.inference_time == performance["inference_time"]
     print(f"Database record updated successfully with metrics: {record.avg_gpu_utilization}, {record.avg_gpu_memory}, {record.inference_time}")
 

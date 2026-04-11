@@ -18,7 +18,8 @@ class HistoryDetail(BaseModel):
     original_code: str
     refactored_code: Optional[str] = None
     insights: Optional[str] = None
-    complexity: Optional[int] = None
+    original_complexity: Optional[int] = None
+    refactored_complexity: Optional[int] = None
     avg_gpu_utilization: Optional[float] = None
     avg_gpu_memory: Optional[float] = None
     avg_gpu_memory_used: Optional[float] = None
