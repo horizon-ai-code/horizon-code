@@ -59,7 +59,8 @@ class PerformanceTracker:
                     
                     self._gpu_utilizations.append(float(util.gpu))
                     # Memory usage as percentage
-                    self._gpu_memory_usage_percent.append(float(mem.used) / float(mem.total) * 100.0)
+                    mem_percent = (float(mem.used) / float(mem.total) * 100.0) if mem.total > 0 else 0
+                    self._gpu_memory_usage_percent.append(mem_percent)
                     self._gpu_memory_usage_used.append(float(mem.used))
                 except pynvml.NVMLError as err:
                     print(f"[PerformanceTracker] NVML Error during polling: {err}")

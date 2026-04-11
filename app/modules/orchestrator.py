@@ -286,14 +286,20 @@ class Orchestrator:
         cc: Optional[int],
         performance_metrics: Dict[str, float],
     ) -> Dict[str, str]:
+        # Ensure we have default values to avoid TypeError: unsupported operand type(s) for /: 'NoneType' and 'int'
+        gpu_util = performance_metrics.get("avg_gpu_utilization", 0)
+        gpu_mem_percent = performance_metrics.get("avg_gpu_memory", 0)
+        gpu_mem_used = performance_metrics.get("avg_gpu_memory_used", 0)
+        inf_time = performance_metrics.get("inference_time", 0)
+
         prompt: str = (
             f"<user_code>{user_code}</user_code>\n"
             f"<refactored_code>{refactored_code}</refactored_code>\n"
             f"<cc>{cc}</cc>\n"
             f"<performance>\n"
-            f"Avg GPU Utilization: {performance_metrics.get('avg_gpu_utilization')}% \n"
-            f"Avg GPU Memory: {performance_metrics.get('avg_gpu_memory_used') / (1024*1024*1024):.2f} GB ({performance_metrics.get('avg_gpu_memory')}%) \n"
-            f"Total Inference Time: {performance_metrics.get('inference_time')}s \n"
+            f"Avg GPU Utilization: {gpu_util}% \n"
+            f"Avg GPU Memory: {gpu_mem_used / (1024*1024*1024):.2f} GB ({gpu_mem_percent}%) \n"
+            f"Total Inference Time: {inf_time}s \n"
             f"</performance>"
         )
         query: List[ChatCompletionRequestMessage] = [
