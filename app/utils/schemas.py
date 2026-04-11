@@ -19,6 +19,9 @@ class HistoryDetail(BaseModel):
     refactored_code: Optional[str] = None
     insights: Optional[str] = None
     complexity: Optional[int] = None
+    avg_gpu_utilization: Optional[float] = None
+    avg_gpu_memory: Optional[float] = None
+    inference_time: Optional[float] = None
     created_at: datetime
     logs: List[LogEntry]
 

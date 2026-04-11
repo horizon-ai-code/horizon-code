@@ -41,6 +41,7 @@ class ClientConnection:
         final_code: str,
         insights: str,
         complexity: Optional[int],
+        performance_metrics: dict,
     ):
         # 1. Update the existing session record with final results
         self.db.complete_session(
@@ -48,6 +49,7 @@ class ClientConnection:
             refactored_code=final_code,
             insights=insights,
             complexity=complexity,
+            performance_metrics=performance_metrics,
         )
 
 
@@ -58,6 +60,7 @@ class ClientConnection:
             "code": final_code,
             "complexity": complexity,
             "insights": insights,
+            "performance": performance_metrics,
         }
         await self.websocket.send_json(message)
 
