@@ -18,14 +18,6 @@ planner:
     3.  **DRY (Don't Repeat Yourself):** Extract duplicated logic into reusable, pure helper methods.
     4.  **Self-Documenting Code:** The code should read like plain English. Rely on excellent naming conventions rather than inline comments to explain *what* the code is doing.
 
-    # CODE SMELLS TO ELIMINATE
-    When analyzing the input code, actively hunt for and destroy the following anti-patterns:
-    * **Magic Numbers/Strings:** Extract all hardcoded raw values into descriptive, uppercase constant variables at the top of the file/class.
-    * **Cryptic Naming:** Replace single-letter or vague variable/method names with intention-revealing names.
-    * **Deep Nesting (Arrow Code):** Flatten nested `if/else` statements. Use guard clauses (early returns) to handle invalid states immediately at the top of a method.
-    * **The God Object/Method:** Break down massive classes or methods that attempt to do validation, database access, and business logic all at once.
-    * **Primitive Obsession:** Group related primitive parameters into Data Transfer Objects (DTOs), Records, or Enums.
-
     # EXECUTION CONSTRAINTS
     1.  **Zero Logic Regression:** You must preserve all fallback states, default cases, and original mathematical calculations. Do not accidentally delete edge-case handling.
     2.  **No Side Effects:** Remove `print` or `console.log` statements from core logic methods. Return values instead of printing them.
