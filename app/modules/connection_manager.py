@@ -43,6 +43,9 @@ class ClientConnection:
         original_complexity: Optional[int],
         refactored_complexity: Optional[int],
         performance_metrics: dict,
+        planner_model: Optional[str] = None,
+        generator_model: Optional[str] = None,
+        judge_model: Optional[str] = None,
     ):
         # 1. Update the existing session record with final results
         self.db.complete_session(
@@ -52,6 +55,9 @@ class ClientConnection:
             original_complexity=original_complexity,
             refactored_complexity=refactored_complexity,
             performance_metrics=performance_metrics,
+            planner_model=planner_model,
+            generator_model=generator_model,
+            judge_model=judge_model,
         )
 
 
@@ -64,6 +70,9 @@ class ClientConnection:
             "refactored_complexity": refactored_complexity,
             "insights": insights,
             "performance": performance_metrics,
+            "planner_model": planner_model,
+            "generator_model": generator_model,
+            "judge_model": judge_model,
         }
         await self.websocket.send_json(message)
 

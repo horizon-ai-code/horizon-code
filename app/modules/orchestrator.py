@@ -187,6 +187,9 @@ class Orchestrator:
                 original_complexity=original_complexity_score,
                 refactored_complexity=refactored_complexity_score,
                 performance_metrics=performance_metrics,
+                planner_model=self.model_config["planner"].get("name"),
+                generator_model=self.model_config["generator"].get("name"),
+                judge_model=self.model_config["judge"].get("name"),
             )
         except asyncio.CancelledError:
             await tracker.stop_tracking()
