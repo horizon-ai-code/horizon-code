@@ -48,15 +48,23 @@ class TestContextManager(unittest.TestCase):
         self.assertEqual(session.status, "Halted")
 
     def test_complete_session_updates_status(self):
-        """Test that complete_session updates status to 'Completed'."""
+        """Test that complete_session updates status to 'Completed' and saves model names."""
         session_id = str(uuid.uuid4())
         self.db_manager.create_session(session_id, "instruction", "original code")
         
-        self.db_manager.complete_session(session_id, "refactored", "insights", 15, 10, {})
+        self.db_manager.complete_session(
+            session_id, "refactored", "insights", 15, 10, {},
+            planner_model="Planner Model",
+            generator_model="Generator Model",
+            judge_model="Judge Model"
+        )
         
         session = RefactorHistory.get(RefactorHistory.id == session_id)
         self.assertEqual(session.status, "Completed")
         self.assertEqual(session.refactored_code, "refactored")
+        self.assertEqual(session.planner_model, "Planner Model")
+        self.assertEqual(session.generator_model, "Generator Model")
+        self.assertEqual(session.judge_model, "Judge Model")
 
 if __name__ == '__main__':
     unittest.main()

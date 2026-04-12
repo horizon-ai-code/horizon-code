@@ -22,5 +22,32 @@ class TestConnectionManager(unittest.IsolatedAsyncioTestCase):
         }
         self.mock_websocket.send_json.assert_awaited_once_with(expected_message)
 
+    async def test_send_result(self):
+        """Test that send_result sends model names through WebSocket."""
+        await self.client_connection.send_result(
+            final_code="code",
+            insights="insights",
+            original_complexity=10,
+            refactored_complexity=5,
+            performance_metrics={},
+            planner_model="Planner Model",
+            generator_model="Generator Model",
+            judge_model="Judge Model"
+        )
+
+        expected_message = {
+            "type": "result",
+            "id": self.client_connection.id,
+            "code": "code",
+            "original_complexity": 10,
+            "refactored_complexity": 5,
+            "insights": "insights",
+            "performance": {},
+            "planner_model": "Planner Model",
+            "generator_model": "Generator Model",
+            "judge_model": "Judge Model"
+        }
+        self.mock_websocket.send_json.assert_awaited_with(expected_message)
+
 if __name__ == '__main__':
     unittest.main()
