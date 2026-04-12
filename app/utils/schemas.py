@@ -20,6 +20,9 @@ class HistoryDetail(BaseModel):
     insights: Optional[str] = None
     original_complexity: Optional[int] = None
     refactored_complexity: Optional[int] = None
+    planner_model: Optional[str] = None
+    generator_model: Optional[str] = None
+    judge_model: Optional[str] = None
     avg_gpu_utilization: Optional[float] = None
     avg_gpu_memory: Optional[float] = None
     avg_gpu_memory_used: Optional[float] = None
