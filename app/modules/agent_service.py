@@ -146,6 +146,7 @@ class AgentService:
             chunks: List[CreateChatCompletionStreamResponse] = []
             try:
                 while not self._stop_event.is_set():
+
                     def get_next():
                         try:
                             return next(iterator)
@@ -178,17 +179,14 @@ class AgentService:
                 "choices": [
                     {
                         "index": 0,
-                        "message": {
-                            "role": "assistant",
-                            "content": content
-                        },
+                        "message": {"role": "assistant", "content": content},
                         "logprobs": None,
-                        "finish_reason": "stop"
+                        "finish_reason": "stop",
                     }
                 ],
                 "usage": {
                     "prompt_tokens": 0,
                     "completion_tokens": len(chunks),
-                    "total_tokens": len(chunks)
-                }
+                    "total_tokens": len(chunks),
+                },
             }  # type: ignore

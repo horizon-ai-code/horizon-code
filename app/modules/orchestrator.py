@@ -224,7 +224,7 @@ class Orchestrator:
         )
 
         text: str = self._get_response(raw_reponse)
-        # print(text)
+        print(text)
 
         result: Dict[str, str] = {
             "plan": self._extract_text(raw_text=text, tags="plan"),
