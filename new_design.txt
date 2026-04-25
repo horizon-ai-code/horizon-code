@@ -1,0 +1,28 @@
+Phase 1: Ingestion & Baseline
+Step 1. Input: The user submits a raw Java code snippet and a natural language instruction (e.g., "Clean up this nested if/else nightmare").
+Step 2. Baseline Analysis: javalang parses the code to generate the complete AST JSON identifying if the code falls within the 3 structures (Class Unit, Method Unit, Statement Unit). The tool lizard calculates the baseline CC (Cyclomatic Complexity).
+Outcome: A mathematically grounded snapshot of the original codebase is established in memory.
+Phase 2: The Strategy Block
+Step 3. Intent Generation (Inference Call 1): PLanner  acts as the NLP Classifier. It reads the user’s natural language and maps it to the strictly defined Snippet-Level Enum List (e.g., FLATTEN_CONDITIONAL, EXTRACT_METHOD, EXTRACT_VARIABLE). It outputs the Intent Packet, defining the exact refactoring category and the strict target boundaries.
+Step 4. Cognitive Reset: Python forcefully clears the generator’s context window to prevent the model from blindly validating its own intent.
+Step 5. Plan Generation (Inference Call 2): The Planner receives the Intent Packet. It outputs the AST Modification JSON, detailing the exact sections to extract, replace, or insert.
+Phase 3: Plan Execution
+Step 6. Code Generation (Inference Call 3): The Generator receives the AST Modification JSON (The Plan) and the original Java code. Following the instructions, it generates the Candidate Java Code.
+Phase 4: Deterministic Validation Routing
+Step 7. Tier 1 Validation (Syntax Heal): javalang attempts to parse the candidate code.
+IF FAIL (Syntax Error): The system triggers the Inner Loop. The exact parse error (e.g., "Missing semicolon at line 42") is routed directly back to the Generator (Step 6) for a rapid, syntax fix.
+Circuit Breaker: If the Inner Loop exceeds 3 iterations, the syntax is deemed unrecoverable. The system breaks the Inner Loop and escalates to the Outer Loop (Step 5) with a "Syntax Unrecoverable" error.
+Step 8. Tier 2 Validation (Structural Fix): The candidate code goes through the three-checkpoint routing engine:
+Check A (Complexity): Is Initial CC <= Refactored CC?
+Check B (Global Boundaries): Are all nodes outside the defined target scope 100% identical to intent packet AST?
+Check C (Intent-Specific Math): Python reads the enum from the I0 packet and runs the corresponding AST math (e.g., if EXTRACT_METHOD, verify AST1 Method Count = AST0 Method Count + 1).
+IF FAIL: The system triggers the Outer Loop. Control routes back to the Planner (Step 5) with a "Strategy Invalid" error, forcing it to write a new AST Modification JSON.
+Phase 5: Heuristic Adjudication
+Step 9. Tier 3 Audit (Judge Evaluation): The Judge Model evaluates the structural difference against the Intent Packet. It is forced to execute a Chain-of-Thought Scratchpad within its response, explicitly mapping variable flow and logical operators to ensure semantic equivalence.
+IF REVISE (Logic Altered): The system triggers the Outer Loop. The Judge's audit notes are passed back to the Planner (Step 5.).
+IF ACCEPT: The orchestration loop terminates successfully.
+Circuit Breaker: If Step 8 & 9 triggers the 3rd total Outer Loop iteration, the system aborts and routes to Phase 6 with a "Semantic Alteration Unresolved" status.
+Phase 6: Finalization
+Step 10. Output Generation: The system determines the final output based on the exit status of the orchestration loop.
+On Success: The successfully refactored code, the complexity reduction metrics, and the complete reasoning trace (including the number of loops used) are recorded.
+On Abort (Max Iterations Reached): The system gracefully degrades. It returns the unmodified original code to the user, alongside the generated Intent Packet and an execution log explaining exactly which validation tier caused the process to time out.
