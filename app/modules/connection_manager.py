@@ -47,21 +47,7 @@ class ClientConnection:
         generator_model: Optional[str] = None,
         judge_model: Optional[str] = None,
     ):
-        # 1. Update the existing session record with final results
-        self.db.complete_session(
-            id=self.id,
-            refactored_code=final_code,
-            insights=insights,
-            original_complexity=original_complexity,
-            refactored_complexity=refactored_complexity,
-            performance_metrics=performance_metrics,
-            planner_model=planner_model,
-            generator_model=generator_model,
-            judge_model=judge_model,
-        )
-
-
-        # 2. Send the final result payload to the frontend
+        """Sends the final result payload to the frontend."""
         message: dict = {
             "type": "result",
             "id": self.id,

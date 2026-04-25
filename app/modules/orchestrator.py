@@ -1,17 +1,56 @@
 import asyncio
 import re
-from typing import Any, Dict, List, Optional
-
 import yaml
+import json
+from typing import Any, Dict, List, Optional, Union
+from pydantic import BaseModel
+
 from llama_cpp import ChatCompletionRequestMessage, CreateChatCompletionResponse
 
 from app.modules.agent_service import AgentService
 from app.modules.connection_manager import ClientConnection
 from app.modules.context_manager import DatabaseManager
 from app.modules.validator import Validator
-from app.utils.paths import MODELS_CONFIG_PATH
+from app.utils.paths import MODELS_CONFIG_PATH, PROMPTS_CONFIG_PATH
 from app.utils.performance import PerformanceTracker
-from app.utils.types import Role
+from app.utils.types import Role, RefactorIntent, ExitStatus, FailureTier
+from app.utils.schemas import (
+    IntentClassifierResponse, 
+    ASTArchitectResponse, 
+    StructuralAuditorResponse, 
+    ValidationFeedback, 
+    ValidationFinding,
+    ErrorReport,
+    LogEntry
+)
+from app.utils.response_parser import ResponseParser
+
+
+class OrchestrationState(BaseModel):
+    session_id: str
+    base_code: str
+    working_code: str
+    user_instruction: str
+    
+    # Structural Artifacts
+    intent_packet: Optional[Dict] = None
+    active_plan: Optional[Dict] = None
+    
+    # Loop Counters
+    strategy_iter: int = 1  # Outer Loop (Max 3)
+    syntax_iter: int = 0    # Inner Loop (Max 3)
+    
+    # Diagnostic Memory
+    cumulative_feedback: List[Dict] = []
+    
+    # Lifecycle
+    current_phase: int = 1
+    exit_status: ExitStatus = ExitStatus.PROCESSING
+    
+    # Baseline Metrics
+    original_complexity: int = 0
+    previous_fault_count: int = 999
+    fault_stall_count: int = 0
 
 
 class Orchestrator:
@@ -28,6 +67,8 @@ class Orchestrator:
         try:
             with open(MODELS_CONFIG_PATH, "r") as config:
                 self.model_config: Dict[str, Any] = yaml.safe_load(config)
+            with open(PROMPTS_CONFIG_PATH, "r") as p_config:
+                self.prompts: Dict[str, Any] = yaml.safe_load(p_config)
         except yaml.YAMLError as e:
             print(f"Error loading config: {e}")
 
@@ -36,161 +77,58 @@ class Orchestrator:
     ) -> None:
         tracker = PerformanceTracker()
         await tracker.start_tracking()
+        
+        # 1. Initialize State
+        state = OrchestrationState(
+            session_id=str(client.id),
+            base_code=user_code,
+            working_code=user_code,
+            user_instruction=user_instruction
+        )
+        
         try:
-            # 1. Initialize the session in the database immediately
+            # 2. Persist session start
             self.db.create_session(
-                id=client.id, instruction=user_instruction, original_code=user_code
+                id=state.session_id, 
+                instruction=state.user_instruction, 
+                original_code=state.base_code
             )
 
-            # Measure Original Complexity
-            orig_complexity_res: Dict[str, Any] = self.validator.check_complexity(
-                user_code
-            )
-            original_complexity_score: Optional[int] = orig_complexity_res[
-                "complexity_score"
-            ]
+            # --- PHASE 1: Baseline ---
+            await self._notify(client, Role.Validator, "Ph1: Baselining code structure...", phase=1)
+            state.original_complexity = self.validator.get_complexity(state.base_code)
+            state.current_phase = 2
 
-            current_code: str = user_code
-            current_instruction: str = user_instruction
-
-            # Iteration Control
-            max_iterations: int = 3
-            attempt_count: int = 0
-            is_valid_refactor: bool = False
-
-            while attempt_count < max_iterations:
-                attempt_count += 1
-                await self.agent_service.swap(self.model_config["planner"])
-
-                await self._notify(
-                    client=client,
-                    role=Role.Planner,
-                    message=f"Generating plan & instructions (Attempt {attempt_count}/{max_iterations})...",
-                )
-
-                result: Dict[str, str] = await self.generate_plan_and_instruction(
-                    current_code, current_instruction
-                )
-                instructions: str = result["instructions"]
-
-                await self._notify(
-                    client=client,
-                    role=Role.Planner,
-                    message=f"Plan generated: {result['plan']}",
-                    content=result["plan"],
-                )
-
-                # print(f"plan: {result['plan']}")
-                # print(f"instruction: {result['instructions']}")
-
-                await self.agent_service.swap(self.model_config["generator"])
-
-                await self._notify(
-                    client=client, role=Role.Generator, message="Refactoring code..."
-                )
-
-                refactored_code: Dict[str, str] = await self.generate_refactored_code(
-                    current_code, instructions
-                )
-                await self._notify(
-                    client=client,
-                    role=Role.Generator,
-                    message="Refactor draft finished.",
-                    content=refactored_code["code"],
-                )
-
-                await self._notify(
-                    client=client, role=Role.Validator, message="Checking syntax..."
-                )
-
-                # Type is Dict[str, Any] because it contains bools, strings, and lists
-                syntax_verdict: Dict[str, Any] = self.validator.check_syntax(
-                    refactored_code["code"]
-                )
-
-                if syntax_verdict["is_valid"]:
-                    await self._notify(
-                        client=client, role=Role.Validator, message="Syntax passed."
-                    )
-
-                    current_code = refactored_code["code"]
-                    is_valid_refactor = True
+            while state.exit_status == ExitStatus.PROCESSING:
+                if state.current_phase == 2:
+                    await self._run_phase_2(client, state)
+                elif state.current_phase == 3:
+                    await self._run_phase_3(client, state)
+                elif state.current_phase == 4:
+                    await self._run_phase_4(client, state)
+                elif state.current_phase == 5:
+                    await self._run_phase_5(client, state)
+                elif state.current_phase == 6:
+                    break
+                
+                # Global circuit breaker
+                if state.strategy_iter > 3:
+                    state.exit_status = ExitStatus.ABORT_STRATEGY
+                    state.current_phase = 6
+                    break
+                
+                if state.fault_stall_count >= 2:
+                    await self._notify(client, Role.System, "Circuit Breaker: Faults not decreasing. Aborting.")
+                    state.exit_status = ExitStatus.ABORT_STRATEGY
+                    state.current_phase = 6
                     break
 
-                await self._notify(
-                    client=client, role=Role.Validator, message="Errors detected."
-                )
-
-                await self.agent_service.swap(self.model_config["judge"])
-
-                await self._notify(
-                    client=client,
-                    role=Role.Judge,
-                    message="Interpreting errors & generating fix instructions...",
-                )
-
-                judge_result: Dict[
-                    str, str
-                ] = await self.interpret_errors_and_generate_instructions(
-                    refactored_code["code"], syntax_verdict["errors"]
-                )
-                await self._notify(
-                    client=client,
-                    role=Role.Judge,
-                    message="Errors interpreted.",
-                    content=judge_result["interpretation"],
-                )
-
-                current_code = refactored_code["code"]
-                current_instruction = judge_result["instructions"]
-
-            # Fallback Mechanism
-            if not is_valid_refactor:
-                current_code = user_code
-
-            await self._notify(
-                client=client, role=Role.Validator, message="Checking complexity..."
-            )
-
-            complexity: Dict[str, Any] = self.validator.check_complexity(current_code)
-            refactored_complexity_score: Optional[int] = complexity["complexity_score"]
-
-            await self._notify(
-                client=client, role=Role.Validator, message="Complexity measured."
-            )
-
+            # --- PHASE 6: Finalization ---
             await tracker.stop_tracking()
             performance_metrics = tracker.get_metrics()
+            
+            await self._run_phase_6(client, state, performance_metrics)
 
-            insights: Dict[str, str] = {}
-            if is_valid_refactor:
-                await self.agent_service.swap(self.model_config["judge"])
-
-                await self._notify(
-                    client=client, role=Role.Judge, message="Generating insights..."
-                )
-
-                insights = await self.generate_insights(
-                    user_code,
-                    current_code,
-                    original_complexity_score,
-                    refactored_complexity_score,
-                )
-            else:
-                insights = {
-                    "insights": "Unable to refactor: the generated code remained too complex or contained persistent syntax errors after maximum attempts. Reverted to original code."
-                }
-
-            await client.send_result(
-                final_code=current_code,
-                insights=insights["insights"],
-                original_complexity=original_complexity_score,
-                refactored_complexity=refactored_complexity_score,
-                performance_metrics=performance_metrics,
-                planner_model=self.model_config["planner"].get("name"),
-                generator_model=self.model_config["generator"].get("name"),
-                judge_model=self.model_config["judge"].get("name"),
-            )
         except asyncio.CancelledError:
             await tracker.stop_tracking()
             self.db.mark_as_halted(client.id)
@@ -198,107 +136,240 @@ class Orchestrator:
             raise
         except Exception as e:
             await tracker.stop_tracking()
+            print(f"Orchestration Error: {e}")
             raise e
         finally:
             await self.agent_service.unload()
 
-        print("Orchestration finished.")
+    async def _run_phase_2(self, client: ClientConnection, state: OrchestrationState) -> None:
+        """Phase 2: The Strategy Block (Inference 1 & 2)."""
+        # Step 3: Classifier
+        if not state.intent_packet or state.strategy_iter > 1:
+            await self._notify(client, Role.Planner, f"Ph2: Classifying intent (Strategy Iter {state.strategy_iter})...", phase=2)
+            await self.agent_service.swap(self.model_config["planner"])
+            
+            prompt = f"<code>{state.base_code}</code>\n<instruction>{state.user_instruction}</instruction>"
+            if state.cumulative_feedback:
+                prompt += f"\n\n### PREVIOUS ATTEMPT FEEDBACK\n{json.dumps(state.cumulative_feedback, indent=2)}"
+            
+            messages: List[ChatCompletionRequestMessage] = [
+                {"role": "system", "content": self.prompts["planner"]["classifier"]},
+                {"role": "user", "content": prompt}
+            ]
+            
+            raw = await self.agent_service.generate(messages, temp=0.1, max_tokens=500)
+            response_text = raw["choices"][0]["message"].get("content") or ""
+            
+            classifier_res = ResponseParser.extract_json(response_text, IntentClassifierResponse)
+            state.intent_packet = classifier_res.intent_packet.model_dump()
+            
+            await self._notify(client, Role.Planner, f"Intent Classified: {state.intent_packet['specific_intent']}", content=json.dumps(state.intent_packet))
 
-    async def generate_plan_and_instruction(
-        self, code: str, instructions: str
-    ) -> Dict[str, str]:
-        prompt: str = f"<code>{code}</code>\n<instruction>{instructions}</instruction>"
-        query: List[ChatCompletionRequestMessage] = [
-            {
-                "role": "system",
-                "content": self.model_config["planner"]["sysprompt"],
-            },
-            {"role": "user", "content": prompt},
+        # Step 4: Cognitive Reset
+        await self.agent_service.clear_context()
+
+        # Step 5: Architect
+        await self._notify(client, Role.Planner, f"Ph2: Architecting modification plan...", phase=2)
+        
+        arch_prompt = f"Intent Packet: {json.dumps(state.intent_packet)}\nCode: <code>{state.base_code}</code>"
+        if state.cumulative_feedback:
+            arch_prompt += f"\n\n### PREVIOUS ATTEMPT FEEDBACK\n{json.dumps(state.cumulative_feedback, indent=2)}"
+            
+        messages: List[ChatCompletionRequestMessage] = [
+            {"role": "system", "content": self.prompts["planner"]["architect"]},
+            {"role": "user", "content": arch_prompt}
         ]
+        
+        raw = await self.agent_service.generate(messages, temp=0.2, max_tokens=1000)
+        arch_text = raw["choices"][0]["message"].get("content") or ""
+        
+        architect_res = ResponseParser.extract_json(arch_text, ASTArchitectResponse)
+        state.active_plan = architect_res.ast_modification_plan.model_dump()
+        
+        await self._notify(client, Role.Planner, "Modification plan generated.", content=json.dumps(state.active_plan))
+        
+        state.current_phase = 3
 
-        raw_reponse: CreateChatCompletionResponse = await self.agent_service.generate(
-            messages=query,
-            temp=self.model_config["planner"]["temperature"],
-            max_tokens=self.model_config["planner"]["max_tokens"],
-            stream=False,
-        )
-
-        text: str = self._get_response(raw_reponse)
-        print(text)
-
-        result: Dict[str, str] = {
-            "plan": self._extract_text(raw_text=text, tags="plan"),
-            "instructions": self._extract_text(raw_text=text, tags="instructions"),
-        }
-
-        return result
-
-    async def generate_refactored_code(
-        self, code: str, instructions: str
-    ) -> Dict[str, str]:
-        prompt: str = f"<code>{code}</code>\n<instruction>{instructions}</instruction>"
-        query: List[ChatCompletionRequestMessage] = [
-            {
-                "role": "system",
-                "content": self.model_config["generator"]["sysprompt"],
-            },
-            {"role": "user", "content": prompt},
+    async def _run_phase_3(self, client: ClientConnection, state: OrchestrationState) -> None:
+        """Phase 3: Plan Execution (Inference 3)."""
+        await self._notify(client, Role.Generator, "Ph3: Implementing plan...", phase=3)
+        await self.agent_service.swap(self.model_config["generator"])
+        await self.agent_service.clear_context()
+        
+        coder_prompt = f"Modification Plan: {json.dumps(state.active_plan)}\nBase Code: <code>{state.base_code}</code>"
+        messages: List[ChatCompletionRequestMessage] = [
+            {"role": "system", "content": self.prompts["generator"]["coder"]},
+            {"role": "user", "content": coder_prompt}
         ]
+        
+        raw = await self.agent_service.generate(messages, temp=0.1, max_tokens=2048)
+        coder_text = raw["choices"][0]["message"].get("content") or ""
+        
+        new_code = ResponseParser.extract_xml(coder_text, "code")
+        if new_code:
+            state.working_code = new_code
+            await self._notify(client, Role.Generator, "Code refactored.", content=new_code)
+            state.current_phase = 4
+        else:
+            # Syntax fail at the gate
+            state.cumulative_feedback.append({"failure_tier": FailureTier.TIER_1_SYNTAX, "error": "No <code> block found."})
+            state.strategy_iter += 1
+            state.current_phase = 2
 
-        raw_reponse: CreateChatCompletionResponse = await self.agent_service.generate(
-            messages=query,
-            temp=self.model_config["generator"]["temperature"],
-            max_tokens=self.model_config["generator"]["max_tokens"],
-            stream=False,
-        )
+    async def _run_phase_4(self, client: ClientConnection, state: OrchestrationState) -> None:
+        """Phase 4: Deterministic Validation (Tier 1 & 2)."""
+        await self._notify(client, Role.Validator, f"Ph4: Validating (Strategy {state.strategy_iter}, Syntax {state.syntax_iter})...", phase=4)
+        
+        # Step 7: Tier 1 - Syntax
+        syntax_res = self.validator.check_syntax(state.working_code)
+        if not syntax_res["is_valid"]:
+            state.syntax_iter += 1
+            if state.syntax_iter <= 3:
+                await self._notify(client, Role.Validator, f"Syntax Fail (Attempt {state.syntax_iter}). Healing...")
+                # Stay in Phase 4, but effectively it loops back to Phase 3/Step 6 for healing
+                # Here we just transition back to Ph 3 with special feedback
+                state.current_phase = 3
+                return
+            else:
+                await self._notify(client, Role.Validator, "Syntax Unrecoverable. Revising strategy.")
+                state.cumulative_feedback.append({"failure_tier": FailureTier.TIER_1_SYNTAX, "error": "Persistent syntax errors after 3 heals."})
+                state.strategy_iter += 1
+                state.syntax_iter = 0
+                state.current_phase = 2
+                return
 
-        text: str = self._get_response(raw_reponse)
-        print(text)
+        await self._notify(client, Role.Validator, "Syntax OK. Running Structural Checks...")
+        
+        # Step 8: Tier 2 - Structural
+        findings = []
+        
+        # Check A: Complexity
+        current_cc = self.validator.get_complexity(state.working_code)
+        if current_cc > state.original_complexity:
+            findings.append(ValidationFinding(
+                failure_tier=FailureTier.TIER_2_A_COMPLEXITY,
+                error_report=ErrorReport(message=f"CC increased from {state.original_complexity} to {current_cc}"),
+                recovery_hint="Simplify logic to maintain or reduce complexity."
+            ))
+            
+        # Check B: Boundary Verification
+        target_scope = ""
+        if state.intent_packet and "scope_anchor" in state.intent_packet:
+            target_scope = state.intent_packet["scope_anchor"].get("member", "") or ""
+            
+        boundary_finding = self.validator.verify_boundary(state.base_code, state.working_code, target_scope)
+        if boundary_finding:
+            findings.append(boundary_finding)
 
-        result: Dict[str, str] = {
-            "code": self._extract_text(raw_text=text, tags="code"),
-        }
+        # Check C: Intent Math
+        if state.intent_packet:
+            intent_enum = RefactorIntent(state.intent_packet["specific_intent"])
+            intent_finding = self.validator.verify_intent(intent_enum, state.base_code, state.working_code)
+            if intent_finding:
+                findings.append(intent_finding)
+            
+        if findings:
+            current_fault_count = len(findings)
+            if current_fault_count >= state.previous_fault_count:
+                state.fault_stall_count += 1
+            else:
+                state.fault_stall_count = 0
+            state.previous_fault_count = current_fault_count
 
-        return result
+            await self._notify(client, Role.Validator, f"Structural Checks Failed ({current_fault_count} issues).", content=json.dumps([f.model_dump() for f in findings]))
+            state.cumulative_feedback.extend([f.model_dump() for f in findings])
+            state.strategy_iter += 1
+            state.syntax_iter = 0
+            state.current_phase = 2
+        else:
+            await self._notify(client, Role.Validator, "Structural Checks Passed.")
+            state.current_phase = 5
 
-    async def interpret_errors_and_generate_instructions(
-        self, code: str, error_logs: List[Dict[str, Any]]
-    ) -> Dict[str, str]:
-        formatted_errors: str = "\n".join([f"- {error}" for error in error_logs])
-        prompt: str = (
-            f"<code>{code}</code>\n<instruction>{formatted_errors}</instruction>"
-        )
-        query: List[ChatCompletionRequestMessage] = [
-            {
-                "role": "system",
-                "content": self.model_config["judge"]["sysprompt_error_interpreter"],
-            },
-            {"role": "user", "content": prompt},
+    async def _run_phase_5(self, client: ClientConnection, state: OrchestrationState) -> None:
+        """Phase 5: Heuristic Adjudication (Inference 4)."""
+        await self._notify(client, Role.Judge, "Ph5: Running final audit...", phase=5)
+        await self.agent_service.swap(self.model_config["judge"])
+        
+        audit_prompt = f"Original: <code>{state.base_code}</code>\nRefactored: <code>{state.working_code}</code>\nIntent: {json.dumps(state.intent_packet)}"
+        messages: List[ChatCompletionRequestMessage] = [
+            {"role": "system", "content": self.prompts["judge"]["auditor"]},
+            {"role": "user", "content": audit_prompt}
         ]
+        
+        raw = await self.agent_service.generate(messages, temp=0.1, max_tokens=1000)
+        audit_text = raw["choices"][0]["message"].get("content") or ""
+        
+        audit_res = ResponseParser.extract_json(audit_text, StructuralAuditorResponse)
+        
+        await self._notify(client, Role.Judge, f"Audit Finished: {audit_res.verdict}", content=json.dumps(audit_res.model_dump()))
+        
+        if audit_res.verdict == "ACCEPT":
+            state.exit_status = ExitStatus.SUCCESS
+            state.current_phase = 6
+        else:
+            await self._notify(client, Role.Judge, "Audit requested revision.")
+            state.cumulative_feedback.append({"failure_tier": FailureTier.TIER_3_JUDGE, "error": audit_res.issues})
+            state.strategy_iter += 1
+            state.current_phase = 2
 
-        raw_reponse: CreateChatCompletionResponse = await self.agent_service.generate(
-            messages=query,
-            temp=self.model_config["judge"]["temperature"],
-            max_tokens=self.model_config["judge"]["max_tokens"],
-            stream=False,
+    async def _run_phase_6(self, client: ClientConnection, state: OrchestrationState, metrics: Dict[str, Any]) -> None:
+        """Phase 6: Finalization & Reporting."""
+        await self._notify(client, Role.System, f"Ph6: Finalizing session (Status: {state.exit_status})...", phase=6)
+        
+        final_code = state.working_code if state.exit_status == ExitStatus.SUCCESS else state.base_code
+        
+        # Generate final insights
+        insights = "Refactoring successful."
+        if state.exit_status == ExitStatus.SUCCESS:
+            try:
+                insights = await self.generate_insights(
+                    state.base_code, 
+                    state.working_code, 
+                    state.original_complexity,
+                    self.validator.get_complexity(state.working_code)
+                )
+            except Exception as e:
+                print(f"Error generating insights: {e}")
+                insights = "Refactoring successful (Insights generation failed)."
+        else:
+            insights = f"Refactoring aborted: {state.exit_status}. Reverted to original code."
+            
+        await client.send_result(
+            final_code=final_code,
+            insights=insights,
+            original_complexity=state.original_complexity,
+            refactored_complexity=self.validator.get_complexity(final_code),
+            performance_metrics=metrics,
+            planner_model=self.model_config["planner"].get("name"),
+            generator_model=self.model_config["generator"].get("name"),
+            judge_model=self.model_config["judge"].get("name"),
         )
-
-        text: str = self._get_response(raw_reponse)
-
-        result: Dict[str, str] = {
-            "interpretation": self._extract_text(raw_text=text, tags="interpretation"),
-            "instructions": self._extract_text(raw_text=text, tags="instructions"),
-        }
-
-        return result
+        
+        self.db.complete_session(
+            id=state.session_id,
+            refactored_code=final_code,
+            insights=insights,
+            original_complexity=state.original_complexity,
+            refactored_complexity=self.validator.get_complexity(final_code),
+            performance_metrics=metrics,
+            exit_status=state.exit_status.value,
+            final_intent=json.dumps(state.intent_packet),
+            final_plan=json.dumps(state.active_plan),
+            outer_loops=state.strategy_iter,
+            inner_loops=state.syntax_iter,
+            planner_model=self.model_config["planner"].get("name"),
+            generator_model=self.model_config["generator"].get("name"),
+            judge_model=self.model_config["judge"].get("name"),
+        )
 
     async def generate_insights(
         self,
         user_code: str,
         refactored_code: str,
-        original_complexity: Optional[int],
-        refactored_complexity: Optional[int],
-    ) -> Dict[str, str]:
+        original_complexity: int,
+        refactored_complexity: int,
+    ) -> str:
+        await self.agent_service.swap(self.model_config["judge"])
 
         prompt: str = (
             f"<user_code>{user_code}</user_code>\n"
@@ -306,60 +377,23 @@ class Orchestrator:
             f"<original_cc>{original_complexity}</original_cc>\n"
             f"<refactored_cc>{refactored_complexity}</refactored_cc>\n"
         )
-        query: List[ChatCompletionRequestMessage] = [
+        messages: List[ChatCompletionRequestMessage] = [
             {
                 "role": "system",
-                "content": self.model_config["judge"]["sysprompt_insights"],
+                "content": self.prompts["judge"]["insights"],
             },
             {"role": "user", "content": prompt},
         ]
 
-        raw_reponse: CreateChatCompletionResponse = await self.agent_service.generate(
-            messages=query,
-            temp=self.model_config["judge"]["temperature"],
-            max_tokens=self.model_config["judge"]["max_tokens"],
+        raw_reponse = await self.agent_service.generate(
+            messages=messages,
+            temp=0.1,
+            max_tokens=1000,
             stream=False,
         )
 
-        text: str = self._get_response(raw_reponse)
-
-        result: Dict[str, str] = {
-            "insights": self._extract_text(raw_text=text, tags="insights"),
-        }
-
-        return result
-
-    def _get_response(self, response: CreateChatCompletionResponse) -> str:
-        return response["choices"][0]["message"]["content"]  # type: ignore
-
-    def _extract_text(self, raw_text: str, tags: str) -> str:
-        # 1. Strip the thinking process
-        text_without_thoughts: str = re.sub(
-            r"<think>.*?</think>", "", raw_text, flags=re.DOTALL | re.IGNORECASE
-        )
-
-        # 2. Try the Happy Path: Tags were formatted correctly
-        pattern: str = rf"<{tags}\b[^>]*>(.*?)</{tags}>"
-        match: Optional[re.Match[str]] = re.search(
-            pattern, text_without_thoughts, re.DOTALL
-        )
-
-        if match:
-            return match.group(1).strip()
-
-        # 3. FALLBACK PATH: The model forgot the XML tags entirely.
-        print(f"[Warning] XML tags missing for '{tags}'. Using fallback parser.")
-
-        # Strip out markdown code blocks (e.g., ```java ... ```) so we don't
-        # accidentally pass hallucinated code into the instructions.
-        # text_without_code_blocks: str = re.sub(
-        #     r"```[a-zA-Z]*\n.*?```", "", text_without_thoughts, flags=re.DOTALL
-        # )
-
-        # Return the remaining clean text as a fallback.
-        # Note: If tags are completely missing, both 'plan' and 'instructions'
-        # will end up receiving this same block of text. This is a safe compromise!
-        return text_without_thoughts.strip()
+        text = raw_reponse["choices"][0]["message"].get("content") or ""
+        return ResponseParser.extract_xml(text, "insights") or text.strip()
 
     async def _notify(
         self,
@@ -367,13 +401,22 @@ class Orchestrator:
         role: Role,
         message: str,
         content: Optional[str] = None,
+        phase: Optional[int] = None,
+        outer_loop: int = 0,
+        inner_loop: int = 0
     ) -> None:
         """Helper to print to terminal, persist to DB, and notify frontend."""
         print(f"[{role}] {message}")
 
         # Persist the log entry to the database in real-time
         self.db.log_status(
-            session_id=client.id, role=role, status=message, content=content
+            session_id=client.id, 
+            role=role.value, 
+            status=message, 
+            content=content,
+            phase=phase,
+            outer_loop=outer_loop,
+            inner_loop=inner_loop
         )
 
         await client.send_status(role=role, content=message)

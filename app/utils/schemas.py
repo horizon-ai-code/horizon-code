@@ -1,9 +1,10 @@
-from pydantic import BaseModel, UUID4
+from pydantic import BaseModel, UUID4, Field
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Any, Dict, Literal
+from .types import Role, RefactorCategory, RefactorIntent, StructureUnit, ExitStatus, FailureTier
 
 class LogEntry(BaseModel):
-    role: str
+    role: Role
     status: str
     content: Optional[str] = None
     created_at: datetime
@@ -33,3 +34,73 @@ class HistoryDetail(BaseModel):
 class DeleteResponse(BaseModel):
     status: str
     message: str
+
+# --- New Orchestration Schemas ---
+
+class ScopeAnchor(BaseModel):
+    target_class: str = Field(..., alias="class")
+    member: Optional[str] = None
+    unit_type: StructureUnit
+
+    class Config:
+        populate_by_name = True
+
+class IntentPacket(BaseModel):
+    refactor_category: RefactorCategory
+    specific_intent: RefactorIntent
+    scope_anchor: ScopeAnchor
+
+class IntentClassifierResponse(BaseModel):
+    classification_scratchpad: str
+    intent_packet: IntentPacket
+
+class ASTMutationDetails(BaseModel):
+    modifiers: List[str] = []
+    type: Optional[str] = None
+    parameters: List[Dict[str, str]] = []
+    refactor_strategy: RefactorIntent
+    logic_changes: List[str] = []
+    body_abstract: Optional[str] = None
+
+class ASTMutation(BaseModel):
+    action: str # e.g., ADD_METHOD, REMOVE_METHOD
+    target: str
+    details: ASTMutationDetails
+
+class ASTModificationPlan(BaseModel):
+    target_class: str
+    ast_mutations: List[ASTMutation]
+
+class ASTArchitectResponse(BaseModel):
+    architect_scratchpad: str
+    ast_modification_plan: ASTModificationPlan
+
+class AuditTrace(BaseModel):
+    original: str
+    refactored: str
+    mapping: str
+
+class AuditScratchpad(BaseModel):
+    variable_trace: List[AuditTrace]
+    logic_comparison: str
+
+class StructuralAuditorResponse(BaseModel):
+    audit_scratchpad: AuditScratchpad
+    verdict: Literal["ACCEPT", "REVISE"]
+    issues: List[str]
+
+class ErrorReport(BaseModel):
+    message: str
+    faulty_node: Optional[str] = None
+    actual_value: Optional[Any] = None
+    required_value: Optional[Any] = None
+
+class ValidationFinding(BaseModel):
+    failure_tier: FailureTier
+    error_report: ErrorReport
+    recovery_hint: str
+
+class ValidationFeedback(BaseModel):
+    total_faults: int
+    is_recoverable: bool
+    findings: List[ValidationFinding]

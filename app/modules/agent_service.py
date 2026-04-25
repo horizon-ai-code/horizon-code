@@ -92,6 +92,16 @@ class AgentService:
         await self.unload()
         await self.load(config)
 
+    async def clear_context(self) -> None:
+        """
+        Purges KV cache (context memory) without unloading model weights.
+        """
+        async with self._model_lock:
+            if self.model is not None:
+                # Purge the sequence memory in llama-cpp
+                await asyncio.to_thread(self.model.reset)
+                print("KV Cache purged. Sequence memory cleared.")
+
     @overload
     async def generate(
         self,
