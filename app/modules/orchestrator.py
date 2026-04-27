@@ -169,6 +169,9 @@ class Orchestrator:
 
             raw = await self.agent_service.generate(messages, temp=0.1, max_tokens=500)
             response_text = raw["choices"][0]["message"].get("content") or ""
+            print(
+                f"\n--- Planner Classifier Output ---\n{response_text}\n-------------------------------"
+            )
 
             classifier_res = ResponseParser.extract_json(
                 response_text, IntentClassifierResponse
@@ -201,6 +204,9 @@ class Orchestrator:
 
         raw = await self.agent_service.generate(messages, temp=0.2, max_tokens=1000)
         arch_text = raw["choices"][0]["message"].get("content") or ""
+        print(
+            f"\n--- Planner Architect Output ---\n{arch_text}\n------------------------------"
+        )
 
         architect_res = ResponseParser.extract_json(arch_text, ASTArchitectResponse)
         state.active_plan = architect_res.ast_modification_plan.model_dump()
@@ -230,6 +236,9 @@ class Orchestrator:
 
         raw = await self.agent_service.generate(messages, temp=0.1, max_tokens=2048)
         coder_text = raw["choices"][0]["message"].get("content") or ""
+        print(
+            f"\n--- Generator Coder Output ---\n{coder_text}\n----------------------------"
+        )
 
         new_code = ResponseParser.extract_xml(coder_text, "code")
         if new_code:
@@ -238,6 +247,7 @@ class Orchestrator:
                 client, Role.Generator, "Code refactored.", content=new_code
             )
             state.current_phase = 4
+            print(new_code)
         else:
             # Syntax fail at the gate
             state.cumulative_feedback.append(
@@ -262,6 +272,9 @@ class Orchestrator:
 
         # Step 7: Tier 1 - Syntax
         syntax_res = self.validator.check_syntax(state.working_code)
+        print(
+            f"\\n--- Validator Syntax Check ---\\nIs Valid: {syntax_res['is_valid']}\\nError: {syntax_res.get('error')}\\n------------------------------"
+        )
         if not syntax_res["is_valid"]:
             state.syntax_iter += 1
             if state.syntax_iter <= 3:
@@ -321,6 +334,7 @@ class Orchestrator:
             findings.append(boundary_finding)
 
         # Check C: Intent Math
+        intent_finding = None
         if state.intent_packet:
             intent_enum = RefactorIntent(state.intent_packet["specific_intent"])
             intent_finding = self.validator.verify_intent(
@@ -329,6 +343,9 @@ class Orchestrator:
             if intent_finding:
                 findings.append(intent_finding)
 
+        print(
+            f"\\n--- Validator Structural Checks ---\\nComplexity Check: {current_cc} (Original: {state.original_complexity})\\nBoundary check found issue: {bool(boundary_finding)}\\nIntent check found issue: {bool(intent_finding)}\\nTotal findings: {len(findings)}\\n-----------------------------------"
+        )
         if findings:
             current_fault_count = len(findings)
             if current_fault_count >= state.previous_fault_count:
@@ -366,6 +383,9 @@ class Orchestrator:
 
         raw = await self.agent_service.generate(messages, temp=0.1, max_tokens=1000)
         audit_text = raw["choices"][0]["message"].get("content") or ""
+        print(
+            f"\n--- Judge Auditor Output ---\n{audit_text}\n--------------------------"
+        )
 
         audit_res = ResponseParser.extract_json(audit_text, StructuralAuditorResponse)
 

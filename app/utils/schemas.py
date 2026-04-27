@@ -46,7 +46,7 @@ class DeleteResponse(BaseModel):
 
 
 class ScopeAnchor(BaseModel):
-    target_class: str = Field(..., alias="class")
+    target_class: Optional[str] = Field(default=None, alias="class")
     member: Optional[str] = None
     unit_type: StructureUnit
 
@@ -93,7 +93,7 @@ class ASTArchitectResponse(BaseModel):
 class AuditTrace(BaseModel):
     original: str
     refactored: str
-    mapping: str
+    mapping: Optional[str] = None
 
 
 class AuditScratchpad(BaseModel):
