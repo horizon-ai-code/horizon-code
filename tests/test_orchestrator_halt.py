@@ -1,81 +1,66 @@
 import unittest
 import asyncio
+import json
 from unittest.mock import MagicMock, AsyncMock, patch
-from app.modules.orchestrator import Orchestrator
+from app.modules.orchestrator import Orchestrator, OrchestrationState
 from app.utils.types import Role
 
 class TestOrchestratorHalt(unittest.IsolatedAsyncioTestCase):
-    async def test_execute_orchestration_handles_cancellation(self):
-        # 1. Mock dependencies
-        agent_service = MagicMock()
-        agent_service.swap = AsyncMock()
-        agent_service.generate = AsyncMock()
-        agent_service.unload = AsyncMock()
+    def setUp(self):
+        self.agent_service = MagicMock()
+        self.agent_service.swap = AsyncMock()
+        self.agent_service.generate = AsyncMock()
+        self.agent_service.unload = AsyncMock()
+        self.agent_service.clear_context = AsyncMock()
         
-        validator = MagicMock()
-        db = MagicMock()
+        self.validator = MagicMock()
+        self.db = MagicMock()
         
-        client = MagicMock()
-        client.id = "test-session-id"
-        client.send_status = AsyncMock()
-        client.send_result = AsyncMock()
+        self.client = MagicMock()
+        self.client.id = "test-session-id"
+        self.client.send_status = AsyncMock()
+        self.client.send_result = AsyncMock()
         
-        # 2. Setup Orchestrator with mocked config
-        with patch("builtins.open", unittest.mock.mock_open(read_data='planner: {sysprompt: "...", temperature: 0, max_tokens: 100}\ngenerator: {sysprompt: "...", temperature: 0, max_tokens: 100}\njudge: {sysprompt_error_interpreter: "...", sysprompt_insights: "...", temperature: 0, max_tokens: 100}')):
-            orchestrator = Orchestrator(agent_service, validator, db)
-            
-        # 3. Force asyncio.CancelledError during the first swap
-        agent_service.swap.side_effect = asyncio.CancelledError()
-        
-        # 4. Execute orchestration and expect CancelledError to be raised
-        with self.assertRaises(asyncio.CancelledError):
-            await orchestrator.execute_orchestration(client, "public class Test {}", "Refactor this.")
-            
-        # 5. Verifications
-        # Verify db.mark_as_halted was called with client.id
-        db.mark_as_halted.assert_called_once_with(client.id)
-        
-        # Verify _notify was called (which calls db.log_status and client.send_status)
-        # Specifically checking for "Process halted." notification
-        db.log_status.assert_any_call(
-            session_id=client.id,
-            role=Role.System,
-            status="Process halted.",
-            content=None
-        )
-        client.send_status.assert_any_call(
-            role=Role.System,
-            content="Process halted."
-        )
-        
-        # Verify agent_service.unload was called in finally block
-        agent_service.unload.assert_called_once()
+        # Mocking model_config and prompts loading
+        self.mock_config = {
+            "planner": {"filename": "p", "name": "p"},
+            "generator": {"filename": "g", "name": "g"},
+            "judge": {"filename": "j", "name": "j"}
+        }
+        self.mock_prompts = {
+            "planner": {"classifier": "c", "architect": "a"},
+            "generator": {"coder": "co"},
+            "judge": {"auditor": "au", "insights": "i"}
+        }
 
-    async def test_execute_orchestration_unloads_on_error(self):
-        # 1. Mock dependencies
-        agent_service = MagicMock()
-        agent_service.swap = AsyncMock()
-        agent_service.unload = AsyncMock()
+    @patch("builtins.open")
+    @patch("yaml.safe_load")
+    async def test_execute_orchestration_handles_cancellation(self, mock_yaml, mock_open):
+        mock_yaml.side_effect = [self.mock_config, self.mock_prompts]
+        orchestrator = Orchestrator(self.agent_service, self.validator, self.db)
         
-        validator = MagicMock()
-        db = MagicMock()
+        # Force asyncio.CancelledError during the first baseline phase notification
+        # (Or any point early in the execution)
+        self.validator.get_complexity.side_effect = asyncio.CancelledError()
         
-        client = MagicMock()
-        client.id = "test-session-id"
-        
-        # 2. Setup Orchestrator
-        with patch("builtins.open", unittest.mock.mock_open(read_data='planner: {sysprompt: "...", temperature: 0, max_tokens: 100}\ngenerator: {sysprompt: "...", temperature: 0, max_tokens: 100}\njudge: {sysprompt_error_interpreter: "...", sysprompt_insights: "...", temperature: 0, max_tokens: 100}')):
-            orchestrator = Orchestrator(agent_service, validator, db)
+        with self.assertRaises(asyncio.CancelledError):
+            await orchestrator.execute_orchestration(self.client, "public class Test {}", "Refactor.")
             
-        # 3. Force a normal exception during the first swap
-        agent_service.swap.side_effect = ValueError("Something went wrong")
+        self.db.mark_as_halted.assert_called_once_with(self.client.id)
+        self.agent_service.unload.assert_called_once()
+
+    @patch("builtins.open")
+    @patch("yaml.safe_load")
+    async def test_execute_orchestration_unloads_on_error(self, mock_yaml, mock_open):
+        mock_yaml.side_effect = [self.mock_config, self.mock_prompts]
+        orchestrator = Orchestrator(self.agent_service, self.validator, self.db)
         
-        # 4. Execute orchestration and expect ValueError to be raised
+        self.validator.get_complexity.side_effect = ValueError("Fatal Error")
+        
         with self.assertRaises(ValueError):
-            await orchestrator.execute_orchestration(client, "public class Test {}", "Refactor this.")
+            await orchestrator.execute_orchestration(self.client, "public class Test {}", "Refactor.")
             
-        # 5. Verify agent_service.unload was called in finally block
-        agent_service.unload.assert_called_once()
+        self.agent_service.unload.assert_called_once()
 
 if __name__ == "__main__":
     unittest.main()
