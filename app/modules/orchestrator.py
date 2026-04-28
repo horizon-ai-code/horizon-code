@@ -12,6 +12,7 @@ from app.modules.context_manager import DatabaseManager
 from app.modules.validator import Validator
 from app.utils.paths import MODELS_CONFIG_PATH, PROMPTS_CONFIG_PATH
 from app.utils.performance import PerformanceTracker
+from app.utils.formatters import format_agent_output
 from app.utils.response_parser import ResponseParser
 from app.utils.schemas import (
     ASTArchitectResponse,
@@ -530,4 +531,5 @@ class Orchestrator:
             inner_loop=inner_loop,
         )
 
-        await client.send_status(role=role, content=message)
+        formatted_message = format_agent_output(message, content)
+        await client.send_status(role=role, content=formatted_message)
