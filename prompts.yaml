@@ -74,7 +74,7 @@ generator:
     4. Ensure code is syntactically valid Java.
 
     ### OUTPUT FORMAT
-    Output only the refactored code block wrapped in <code> tags. 
+    Output only the refactored code block wrapped in <code> tags.
     Example:
     <code>
     public class X { ... }
@@ -111,5 +111,17 @@ judge:
     You are a Senior Technical Lead evaluating a completed code refactor.
     Analyze the improvements, highlighting efficiency gains, readability, and the impact of the complexity score.
 
+    ### RULES
+    - Output ONLY a JSON object. No preamble.
+    - Provide a list of insights, each with a 'title' and 'details'.
+    - Provide as many insights as you can, be detailed in explaning the insights
+
     ### OUTPUT FORMAT
-    Output your analysis wrapped in <insights> tags.
+    {
+      "insights": [
+        {
+          "title": "Short descriptive title",
+          "details": "Detailed explanation of the improvement or observation."
+        }
+      ]
+    }

@@ -10,14 +10,15 @@ from app.modules.agent_service import AgentService
 from app.modules.connection_manager import ClientConnection
 from app.modules.context_manager import DatabaseManager
 from app.modules.validator import Validator
+from app.utils.formatters import format_agent_output
 from app.utils.paths import MODELS_CONFIG_PATH, PROMPTS_CONFIG_PATH
 from app.utils.performance import PerformanceTracker
-from app.utils.formatters import format_agent_output
 from app.utils.response_parser import ResponseParser
 from app.utils.schemas import (
     ASTArchitectResponse,
     ErrorReport,
     IntentClassifierResponse,
+    RefactorInsightsResponse,
     StructuralAuditorResponse,
     ValidationFinding,
 )
@@ -428,9 +429,21 @@ class Orchestrator:
             else state.base_code
         )
 
-        # Generate final insights
-        insights = "Refactoring successful."
+        # 1. Send immediate result (without insights)
+        await client.send_result(
+            final_code=final_code,
+            original_complexity=state.original_complexity,
+            refactored_complexity=self.validator.get_complexity(final_code),
+            performance_metrics=metrics,
+            planner_model=self.model_config["planner"].get("name"),
+            generator_model=self.model_config["generator"].get("name"),
+            judge_model=self.model_config["judge"].get("name"),
+        )
+
+        # 2. Generate final insights as follow-up
+        insights: Any = []
         if state.exit_status == ExitStatus.SUCCESS:
+            await self._notify(client, Role.Judge, "Generating insights...")
             try:
                 insights = await self.generate_insights(
                     state.base_code,
@@ -446,21 +459,14 @@ class Orchestrator:
                 f"Refactoring aborted: {state.exit_status}. Reverted to original code."
             )
 
-        await client.send_result(
-            final_code=final_code,
-            insights=insights,
-            original_complexity=state.original_complexity,
-            refactored_complexity=self.validator.get_complexity(final_code),
-            performance_metrics=metrics,
-            planner_model=self.model_config["planner"].get("name"),
-            generator_model=self.model_config["generator"].get("name"),
-            judge_model=self.model_config["judge"].get("name"),
-        )
+        # 3. Send insights follow-up
+        await client.send_insights(insights)
 
+        # 4. Final DB update
         self.db.complete_session(
             id=state.session_id,
             refactored_code=final_code,
-            insights=insights,
+            insights=json.dumps(insights) if not isinstance(insights, str) else insights,
             original_complexity=state.original_complexity,
             refactored_complexity=self.validator.get_complexity(final_code),
             performance_metrics=metrics,
@@ -480,7 +486,7 @@ class Orchestrator:
         refactored_code: str,
         original_complexity: int,
         refactored_complexity: int,
-    ) -> str:
+    ) -> Any:
         await self.agent_service.swap(self.model_config["judge"])
 
         prompt: str = (
@@ -505,7 +511,14 @@ class Orchestrator:
         )
 
         text = raw_reponse["choices"][0]["message"].get("content") or ""
-        return ResponseParser.extract_xml(text, "insights") or text.strip()
+        print(f"\n--- Judge Insights Output ---\n{text}\n---------------------------")
+
+        try:
+            insights_res = ResponseParser.extract_json(text, RefactorInsightsResponse)
+            return [i.model_dump() for i in insights_res.insights]
+        except Exception as e:
+            print(f"Failed to parse insights JSON: {e}")
+            return text.strip()
 
     async def _notify(
         self,

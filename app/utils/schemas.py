@@ -23,7 +23,7 @@ class HistoryDetail(BaseModel):
     user_instruction: str
     original_code: str
     refactored_code: Optional[str] = None
-    insights: Optional[str] = None
+    insights: Optional[Any] = None
     original_complexity: Optional[int] = None
     refactored_complexity: Optional[int] = None
     planner_model: Optional[str] = None
@@ -43,6 +43,15 @@ class DeleteResponse(BaseModel):
 
 
 # --- New Orchestration Schemas ---
+
+
+class RefactorInsight(BaseModel):
+    title: str
+    details: str
+
+
+class RefactorInsightsResponse(BaseModel):
+    insights: List[RefactorInsight]
 
 
 class ScopeAnchor(BaseModel):
