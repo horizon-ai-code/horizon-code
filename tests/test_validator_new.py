@@ -49,7 +49,7 @@ class TestValidatorNew(unittest.TestCase):
 
         finding = self.validator.verify_boundary(orig, refac, "target")
         self.assertIsNotNone(finding)
-        self.assertIn("Boundary Violation", finding.error_report.message)
+        self.assertIn("Boundary Violation", finding.error_report.message)  # type: ignore
 
     def test_verify_decompose_conditional(self):
         orig = "class A { void m() { if(a && b || c) { doSomething(); } } }"

@@ -91,7 +91,9 @@ judge:
     3. VERDICT: Set to "REVISE" if logic changed or "ACCEPT" if correct.
 
     ### RULES
-    - Be pessimistic. If there is a risk of a logic change, demand a REVISE.
+    - Be objective. Focus on actual mathematical/logical drift, not changes in syntax or style.
+    - Standard refactoring idioms (like returning a boolean evaluation directly instead of using if/else) are ACCEPTABLE and encouraged.
+    - Demand a REVISE only if the functional output of the logic would change for a given input.
     - Output ONLY a JSON object.
 
     ### OUTPUT FORMAT

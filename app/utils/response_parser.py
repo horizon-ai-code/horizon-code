@@ -51,6 +51,9 @@ class ResponseParser:
             else:
                 raise ValueError("No JSON found in response")
 
+        # Strip single-line comments (//...) that break JSON parsing
+        json_str = re.sub(r'//.*$', '', json_str, flags=re.MULTILINE)
+
         try:
             return model.model_validate_json(json_str)
         except ValidationError as e:
