@@ -27,7 +27,6 @@ class TestFormatters(unittest.TestCase):
                     "action": "ADD_METHOD",
                     "target": "validateToken",
                     "details": {
-                        "refactor_strategy": "EXTRACT_METHOD",
                         "logic_changes": ["Move JWT logic here", "Add null checks"]
                     }
                 }

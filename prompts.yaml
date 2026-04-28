@@ -53,7 +53,6 @@ planner:
               "modifiers": ["public", "static"],
               "type": "ReturnType",
               "parameters": [{"name": "n", "type": "t"}],
-              "refactor_strategy": "INTENT_ENUM",
               "logic_changes": ["Step 1", "Step 2"],
               "body_abstract": "Summary of logic"
             }

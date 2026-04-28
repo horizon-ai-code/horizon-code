@@ -78,7 +78,6 @@ class ASTMutationDetails(BaseModel):
     modifiers: List[str] = []
     type: Optional[str] = None
     parameters: List[Dict[str, str]] = []
-    refactor_strategy: RefactorIntent
     logic_changes: List[str] = []
     body_abstract: Optional[str] = None
 

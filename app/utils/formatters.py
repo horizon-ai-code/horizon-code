@@ -40,9 +40,6 @@ def format_agent_output(message: str, content: Optional[str]) -> str:
             formatted_md += f"- **{action}** on `{target}`\n"
             details = mut.get("details", {})
             if details:
-                strategy = details.get("refactor_strategy")
-                if strategy:
-                    formatted_md += f"  - Strategy: `{strategy}`\n"
                 logic = details.get("logic_changes", [])
                 for change in logic:
                     formatted_md += f"  - *{change}*\n"
