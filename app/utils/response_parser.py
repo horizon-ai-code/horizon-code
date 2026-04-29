@@ -54,6 +54,12 @@ class ResponseParser:
         # Strip single-line comments (//...) that break JSON parsing
         json_str = re.sub(r'//.*$', '', json_str, flags=re.MULTILINE)
 
+        # Fix Python-isms (None -> null, True -> true, False -> false)
+        # We use word boundaries to avoid replacing parts of strings
+        json_str = re.sub(r'\bNone\b', 'null', json_str)
+        json_str = re.sub(r'\bTrue\b', 'true', json_str)
+        json_str = re.sub(r'\bFalse\b', 'false', json_str)
+
         try:
             return model.model_validate_json(json_str)
         except ValidationError as e:

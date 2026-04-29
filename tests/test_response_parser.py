@@ -42,5 +42,18 @@ class TestResponseParser(unittest.TestCase):
         result = ResponseParser.extract_json(text, IntentPacket)
         self.assertEqual(result.specific_intent, RefactorIntent.SPLIT_LOOP)
 
+    def test_extract_json_python_keywords(self):
+        # JSON containing None instead of null
+        text = '{"refactor_category": "CONTROL_FLOW", "specific_intent": "REMOVE_CONTROL_FLAG", "scope_anchor": {"class": "A", "member": None, "unit_type": "METHOD_UNIT"}}'
+        result = ResponseParser.extract_json(text, IntentPacket)
+        self.assertIsNone(result.scope_anchor.member)
+
+        # JSON containing True/False
+        # (Assuming IntentPacket doesn't have booleans, using a mock model check if needed or just validating it doesn't crash)
+        text = '{"refactor_category": "CONTROL_FLOW", "specific_intent": "REMOVE_CONTROL_FLAG", "scope_anchor": {"class": "A", "is_valid": True, "unit_type": "METHOD_UNIT"}}'
+        # If the model ignores extra fields, this should pass after cleaning
+        result = ResponseParser.extract_json(text, IntentPacket)
+        self.assertEqual(result.specific_intent, RefactorIntent.REMOVE_CONTROL_FLAG)
+
 if __name__ == '__main__':
     unittest.main()

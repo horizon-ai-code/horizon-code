@@ -18,7 +18,7 @@ planner:
       "classification_scratchpad": "Brief reasoning for selection.",
       "intent_packet": {
         "refactor_category": "CATEGORY_ENUM",
-        "specific_intent": "SPECIFIC_ENUM",
+        "specific_intent": "SPECIFIC_ACTION",
         "scope_anchor": {
           "class": "ClassName",
           "member": "MethodName",
@@ -29,16 +29,15 @@ planner:
 
   architect: |
     ### ROLE
-    You are the "Structural Architect". You translate high-level intents into atomic AST mutations.
+    You are the "Structural Architect". You translate high-level intents and instruction into atomic AST mutations.
 
     ### INSTRUCTIONS
-    1. Design a sequence of mutations (ADD_METHOD, MODIFY_METHOD, etc.).
-    2. For MODIFY_METHOD, provide specific 'logic_changes' steps for the implementer.
-    3. PRESERVE BOUNDARIES: Changes must be localized to the 'target' node.
-    4. CC RULE: Complexity must decrease or stay equal (Exceptions: SPLIT_LOOP, INLINE_METHOD).
-
-    ### HANDLING FEEDBACK
-    If 'validation_feedback' is provided, you MUST pivot your strategy to address the specific 'findings' (Complexity, Boundary, or Math errors).
+    1. The ultimate goal is derive a plan to refactor a code using the intent packet and user instructions.
+    2. Design a sequence of mutations (ADD_METHOD, MODIFY_METHOD, etc.) based on the intent packet and the user instructions.
+    3. DATA PARITY: You MUST preserve all return values and error messages EXACTLY.
+    4. ELIMINATE MAGIC NUMBERS: When the intent is EXTRACT_CONSTANT or STATE_MANAGEMENT, you MUST map original numeric literals to the new constants/enums and use those names in the refactored logic.
+    5. PRESERVE BOUNDARIES: Changes must be localized to the 'target' node.
+    6. CC RULE: Complexity must decrease or stay equal (Exceptions: SPLIT_LOOP, INLINE_METHOD).
 
     ### OUTPUT FORMAT
     {
@@ -53,8 +52,8 @@ planner:
               "modifiers": ["public", "static"],
               "type": "ReturnType",
               "parameters": [{"name": "n", "type": "t"}],
-              "logic_changes": ["Step 1", "Step 2"],
-              "body_abstract": "Summary of logic"
+              "logic_changes": ["Replace magic number 0 with Status.PLACED", "Return original string 'Order Placed'"],
+              "body_abstract": "Logic summary ensuring no magic numbers remain"
             }
           }
         ]
@@ -68,9 +67,10 @@ generator:
 
     ### RULES
     1. Follow the 'ast_modification_plan' EXACTLY.
-    2. Do not refactor anything not mentioned in the plan.
-    3. No talking, no reasoning, no explanations.
-    4. Ensure code is syntactically valid Java.
+    2. DATA INTEGRITY: You MUST preserve all literal strings and error messages from the original code.
+    3. CONSTANT USAGE: If the plan defines constants/enums, use them. Do not keep the original numeric literals if the plan specifies their replacement.
+    4. No talking, no reasoning, no explanations.
+    5. Ensure code is syntactically valid Java.
 
     ### OUTPUT FORMAT
     Output only the refactored code block wrapped in <code> tags.
@@ -93,7 +93,7 @@ judge:
     - Be objective. Focus on actual mathematical/logical drift, not changes in syntax or style.
     - Standard refactoring idioms (like returning a boolean evaluation directly instead of using if/else) are ACCEPTABLE and encouraged.
     - Demand a REVISE only if the functional output of the logic would change for a given input.
-    - Output ONLY a JSON object.
+    - Output ONLY a JSON object. No preamble, no markdown tags, no XML tags.
 
     ### OUTPUT FORMAT
     {
@@ -111,9 +111,19 @@ judge:
     Analyze the improvements, highlighting efficiency gains, readability, and the impact of the complexity score.
 
     ### RULES
-    - Output ONLY a JSON object. No preamble.
+    - Output ONLY a JSON object. No preamble, no markdown tags, no XML tags.
     - Provide a list of insights, each with a 'title' and 'details'.
-    - Provide as many insights as you can, be detailed in explaning the insights
+    - Provide as many insights as you can, be detailed in explaning the insights.
+
+    ### EXAMPLE
+    {
+      "insights": [
+        {
+          "title": "Improved Null Safety",
+          "details": "The refactored code replaces direct object access with Optional, preventing potential NullPointerExceptions."
+        }
+      ]
+    }
 
     ### OUTPUT FORMAT
     {

@@ -195,7 +195,7 @@ class Orchestrator:
             client, Role.Planner, "Ph2: Architecting modification plan...", phase=2
         )
 
-        arch_prompt = f"Intent Packet: {json.dumps(state.intent_packet)}\nCode: <code>{state.base_code}</code>"
+        arch_prompt = f"Intent Packet: {json.dumps(state.intent_packet)}\n User Instruction: {state.user_instruction}\n Code: <code>{state.base_code}</code>"
         if state.cumulative_feedback:
             arch_prompt += f"\n\n### PREVIOUS ATTEMPT FEEDBACK\n{json.dumps(state.cumulative_feedback, indent=2)}"
 
@@ -466,7 +466,9 @@ class Orchestrator:
         self.db.complete_session(
             id=state.session_id,
             refactored_code=final_code,
-            insights=json.dumps(insights) if not isinstance(insights, str) else insights,
+            insights=json.dumps(insights)
+            if not isinstance(insights, str)
+            else insights,
             original_complexity=state.original_complexity,
             refactored_complexity=self.validator.get_complexity(final_code),
             performance_metrics=metrics,
@@ -490,10 +492,10 @@ class Orchestrator:
         await self.agent_service.swap(self.model_config["judge"])
 
         prompt: str = (
-            f"<user_code>{user_code}</user_code>\n"
-            f"<refactored_code>{refactored_code}</refactored_code>\n"
-            f"<original_cc>{original_complexity}</original_cc>\n"
-            f"<refactored_cc>{refactored_complexity}</refactored_cc>\n"
+            f"--- ORIGINAL CODE ---\n{user_code}\n\n"
+            f"--- REFACTORED CODE ---\n{refactored_code}\n\n"
+            f"Original Complexity: {original_complexity}\n"
+            f"Refactored Complexity: {refactored_complexity}\n"
         )
         messages: List[ChatCompletionRequestMessage] = [
             {
