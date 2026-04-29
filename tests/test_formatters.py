@@ -59,5 +59,25 @@ class TestFormatters(unittest.TestCase):
         self.assertIn("> Missing semicolon", result)
         self.assertIn("*Hint:* Add ';' at the end of the line.", result)
 
+    def test_validator_output_formatting(self):
+        message = "Structural Checks Failed (1 issues)."
+        content = json.dumps([
+            {
+                "failure_tier": "TIER_2_C_INTENT_MATH",
+                "error_report": {
+                    "message": "Nesting depth did not decrease.",
+                    "faulty_node": "IfStatement"
+                },
+                "recovery_hint": "Check if the refactoring actually achieved the structural goal."
+            }
+        ])
+        result = format_agent_output(message, content)
+        self.assertIn("**Total Faults:** 1", result)
+        self.assertIn("**[TIER_2_C_INTENT_MATH]**", result)
+        self.assertIn("> Nesting depth did not decrease.", result)
+        self.assertIn("- Node: `IfStatement`", result)
+        self.assertIn("- *Hint:* Check if the refactoring actually achieved the structural goal.", result)
+        self.assertNotIn("```json", result)
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,5 +1,5 @@
 planner:
-  name: "DeepSeek-R1-Distill-Qwen-1.5B"
+  name: "Qwen2.5-Coder-3B-Instruct"
   temperature: 0.1
   max_tokens: 4096
   context_size: 6144

@@ -70,6 +70,21 @@ def format_agent_output(message: str, content: Optional[str]) -> str:
             for issue in issues:
                 formatted_md += f"- {issue}\n"
 
+    # 5. Validator Output Formatting (list of ValidationFindings)
+    elif isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict) and "failure_tier" in data[0] and "error_report" in data[0]:
+        formatted_md = f"**Total Faults:** {len(data)}\n\n"
+        for finding in data:
+            tier = finding.get("failure_tier", "")
+            formatted_md += f"**[{tier}]**\n"
+            error = finding.get("error_report", {})
+            if error.get("message"):
+                formatted_md += f"> {error.get('message')}\n"
+            if error.get("faulty_node"):
+                formatted_md += f"- Node: `{error.get('faulty_node')}`\n"
+            if finding.get("recovery_hint"):
+                formatted_md += f"- *Hint:* {finding.get('recovery_hint')}\n"
+            formatted_md += "\n"
+
     # Fallback for generic JSON dict
     elif isinstance(data, dict):
         formatted_md = "```json\n" + json.dumps(data, indent=2) + "\n```"
