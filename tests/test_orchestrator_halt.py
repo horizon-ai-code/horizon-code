@@ -60,6 +60,7 @@ class TestOrchestratorHalt(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):
             await orchestrator.execute_orchestration(self.client, "public class Test {}", "Refactor.")
             
+        self.client.send_status.assert_any_call(role=Role.System, content="Error: Fatal Error")
         self.agent_service.unload.assert_called_once()
 
 if __name__ == "__main__":

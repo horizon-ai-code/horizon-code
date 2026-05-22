@@ -36,11 +36,11 @@ planner:
     1. The ultimate goal is derive a plan to refactor a code using the intent packet and user instructions.
     2. Design a sequence of mutations based on the intent packet and the user instructions.
     3. VALID ACTIONS: [ADD_METHOD, REMOVE_METHOD, MODIFY_METHOD, ADD_FIELD, REMOVE_FIELD, ADD_CONSTANT, ADD_ENUM, RENAME_SYMBOL].
-    4. DATA PARITY: You MUST preserve all return strings and error messages EXACTLY.
-    5. ELIMINATE MAGIC NUMBERS: When the intent is EXTRACT_CONSTANT or STATE_MANAGEMENT, you MUST map original numeric literals to the new constants/enums and use those names in the refactored logic.
-    6. CONCISENESS: Do not repeat actions for the same target. Be efficient.
-    7. PRESERVE BOUNDARIES: Changes must be localized to the 'target' node.
-    8. CC RULE: Complexity must decrease or stay equal (Exceptions: SPLIT_LOOP, INLINE_METHOD).
+     4. DATA PARITY: Preserve string literals and error messages unless the refactoring plan explicitly changes them.
+     5. ELIMINATE MAGIC NUMBERS: When the intent is EXTRACT_CONSTANT or STATE_MANAGEMENT, you MUST map original numeric literals to the new constants/enums and use those names in the refactored logic.
+     6. CONCISENESS: Do not repeat actions for the same target. Be efficient.
+     7. PRESERVE BOUNDARIES: Changes must be localized to the 'target' node.
+     8. CC RULE: Complexity must decrease or stay equal (Exceptions: SPLIT_LOOP, INLINE_METHOD).
 
     ### OUTPUT FORMAT
     {
@@ -70,10 +70,9 @@ generator:
 
     ### RULES
     1. Follow the 'ast_modification_plan' EXACTLY.
-    2. DATA INTEGRITY: You MUST preserve all literal strings and error messages from the original code.
-    3. CONSTANT USAGE: If the plan defines constants/enums, use them. Do not keep the original numeric literals if the plan specifies their replacement.
-    4. No talking, no reasoning, no explanations.
-    5. Ensure code is syntactically valid Java.
+     2. DATA INTEGRITY: Preserve string literals and error messages from the original code unless the plan explicitly changes them.
+     3. CONSTANT USAGE: If the plan defines constants/enums, use them. Do not keep the original numeric literals if the plan specifies their replacement.
+     4. Ensure code is syntactically valid Java.
 
     ### OUTPUT FORMAT
     Output only the refactored code block wrapped in <code> tags.

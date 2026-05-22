@@ -1,5 +1,6 @@
 import hashlib
 import json
+import re
 from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union
 
 import javalang
@@ -55,6 +56,57 @@ class ASTWalker:
         """Generates a stable hash for a serialized node."""
         node_json = json.dumps(serialized_node, sort_keys=True)
         return hashlib.sha256(node_json.encode()).hexdigest()
+
+    @staticmethod
+    def get_structural_signature(node: Any) -> str:
+        """Computes a structural hash ignoring variable names, formatting, and imports.
+
+        Captures node-type skeleton, operators, branching depth,
+        method invocation names, and string literals.
+        """
+        skeleton_parts: List[str] = []
+        operators: set = set()
+        string_literals: list = []
+        invocations: list = []
+
+        def walk(n: Any, depth: int = 0) -> None:
+            if not isinstance(n, javalang.tree.Node):
+                return
+
+            node_name = n.__class__.__name__
+            skeleton_parts.append(node_name)
+
+            if isinstance(n, javalang.tree.BinaryOperation):
+                if hasattr(n, "operator"):
+                    operators.add(n.operator)
+
+            if isinstance(n, javalang.tree.MethodInvocation):
+                if hasattr(n, "member"):
+                    invocations.append(n.member)
+
+            if isinstance(n, javalang.tree.Literal):
+                if hasattr(n, "value") and isinstance(n.value, str):
+                    string_literals.append(n.value)
+
+            if isinstance(n, javalang.tree.IfStatement):
+                skeleton_parts.append(f"Depth({depth})")
+
+            for child in n.children:
+                if isinstance(child, javalang.tree.Node):
+                    walk(child, depth + 1 if isinstance(n, javalang.tree.IfStatement) else depth)
+                elif isinstance(child, list):
+                    for item in child:
+                        if isinstance(item, javalang.tree.Node):
+                            walk(item, depth)
+
+        walk(node)
+        sig = (
+            "|".join(skeleton_parts)
+            + "||ops:" + ",".join(sorted(operators))
+            + "||strs:" + ",".join(sorted(string_literals))
+            + "||calls:" + ",".join(sorted(invocations))
+        )
+        return hashlib.sha256(sig.encode()).hexdigest()
 
     @staticmethod
     def find_nodes(node: Any, node_type: Union[Type, Tuple[Type, ...]]) -> List[Any]:
@@ -360,6 +412,13 @@ class Validator:
             RefactorIntent.RENAME_SYMBOL: RefactorVerifier.verify_rename_symbol,
         }
 
+    @staticmethod
+    def format_syntax_error(error_str: str) -> str:
+        match = re.search(r"line (\d+):(\d+) (.+)", error_str)
+        if match:
+            return f"[L{match.group(1)}:{match.group(2)}] {match.group(3)}. Fix and output valid Java only."
+        return f"Syntax error: {error_str[:150]}. Fix and output valid Java only."
+
     def check_syntax(self, snippet: str) -> Dict[str, Any]:
         clean_snippet = snippet.strip()
         result: Dict[str, Any] = {"is_valid": False, "errors": [], "unit": None}
@@ -373,8 +432,9 @@ class Validator:
                 result["unit"] = self.unit_map[index]
                 result["ast"] = tree
                 return result
-            except (javalang.parser.JavaSyntaxError, javalang.tokenizer.LexerError):
-                pass
+            except (javalang.parser.JavaSyntaxError, javalang.tokenizer.LexerError) as e:
+                result["errors"].append(str(e))
+                continue
         return result
 
     def get_complexity(self, snippet: str) -> int:
@@ -389,6 +449,23 @@ class Validator:
                 max_cc = max(f.cyclomatic_complexity for f in analysis.function_list)
                 break
         return max_cc
+
+    def get_method_complexity(self, snippet: str, method_name: str) -> Optional[int]:
+        clean_snippet = snippet.strip()
+        for template in self.templates:
+            wrapped_code = template(clean_snippet)
+            try:
+                javalang.parse.parse(wrapped_code)
+            except (javalang.parser.JavaSyntaxError, javalang.tokenizer.LexerError):
+                continue
+            analysis = lizard.analyze_file.analyze_source_code(
+                "mock.java", wrapped_code
+            )
+            for func in analysis.function_list:
+                if func.name == method_name:
+                    return func.cyclomatic_complexity
+            return None
+        return None
 
     def verify_intent(
         self, intent: RefactorIntent, orig_code: str, refac_code: str
@@ -428,13 +505,13 @@ class Validator:
         orig_unit = orig_res["ast"]
         refac_unit = refac_res["ast"]
 
-        # If we are refactoring a method, we ensure other methods in the same class haven't changed.
+        # Compare non-target methods using structural signatures (ignores formatting, variable names, imports)
         orig_methods = {
-            m.name: ASTWalker.get_hash(ASTWalker.serialize_node(m))
+            m.name: ASTWalker.get_structural_signature(m)
             for m in ASTWalker.find_nodes(orig_unit, javalang.tree.MethodDeclaration)
         }
         refac_methods = {
-            m.name: ASTWalker.get_hash(ASTWalker.serialize_node(m))
+            m.name: ASTWalker.get_structural_signature(m)
             for m in ASTWalker.find_nodes(refac_unit, javalang.tree.MethodDeclaration)
         }
 
@@ -442,17 +519,13 @@ class Validator:
         # We only care about modifications to EXISTING structures outside target_scopes.
         # NEW structures (enums/classes) are allowed as part of the refactoring strategy.
         orig_structs = {
-            getattr(n, "name", "unknown"): ASTWalker.get_hash(
-                ASTWalker.serialize_node(n)
-            )
+            getattr(n, "name", "unknown"): ASTWalker.get_structural_signature(n)
             for n in ASTWalker.find_nodes(
                 orig_unit, (javalang.tree.ClassDeclaration, javalang.tree.EnumDeclaration)
             )
         }
         refac_structs = {
-            getattr(n, "name", "unknown"): ASTWalker.get_hash(
-                ASTWalker.serialize_node(n)
-            )
+            getattr(n, "name", "unknown"): ASTWalker.get_structural_signature(n)
             for n in ASTWalker.find_nodes(
                 refac_unit, (javalang.tree.ClassDeclaration, javalang.tree.EnumDeclaration)
             )

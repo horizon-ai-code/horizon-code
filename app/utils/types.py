@@ -1,12 +1,31 @@
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 
 class RefactorRequest(BaseModel):
     code: str
     user_instruction: str
+
+    @field_validator("code")
+    @classmethod
+    def code_min_length(cls, v: str) -> str:
+        if len(v.strip()) < 10:
+            raise ValueError("Code must be at least 10 characters")
+        if len(v) > 100_000:
+            raise ValueError("Code exceeds maximum length of 100KB")
+        return v
+
+    @field_validator("user_instruction")
+    @classmethod
+    def instruction_not_empty(cls, v: str) -> str:
+        stripped = v.strip()
+        if not stripped or len(stripped) < 3:
+            raise ValueError("Instruction must be at least 3 characters")
+        if len(v) > 10_000:
+            raise ValueError("Instruction exceeds maximum length of 10KB")
+        return v
 
 
 class HaltRequest(BaseModel):

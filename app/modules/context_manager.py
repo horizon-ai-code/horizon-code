@@ -10,6 +10,17 @@ from app.utils.paths import DB_DIR, DB_PATH
 db = peewee.SqliteDatabase(DB_PATH, pragmas={"journal_mode": "wal", "foreign_keys": 1})
 
 
+SCHEMA_VERSION = 2
+
+
+class SchemaVersion(peewee.Model):
+    version = peewee.IntegerField(default=1)
+
+    class Meta:
+        database = db
+        table_name = "schema_version"
+
+
 # 2. Define the Database Schema
 class RefactorHistory(peewee.Model):
     id = peewee.UUIDField(primary_key=True)
@@ -61,27 +72,44 @@ class DatabaseManager:
         self._initialize_db()
 
     def _initialize_db(self) -> None:
-        """Safely creates the tables and adds missing columns if they don't exist."""
+        """Creates tables and runs migrations based on schema version."""
         db.connect(reuse_if_open=True)
-        db.create_tables([RefactorHistory, OrchestrationLog], safe=True)
-        
-        # Simple migration for SQLite to add new columns
-        columns = {
-            "refactorhistory": ["exit_status", "final_intent", "final_plan", "total_outer_loops", "total_inner_loops"],
-            "orchestrationlog": ["phase", "outer_loop", "inner_loop"]
-        }
-        
-        for table, cols in columns.items():
-            existing_cols = [c.name for c in db.get_columns(table)]
-            for col in cols:
-                if col not in existing_cols:
-                    print(f"Adding column {col} to table {table}...")
-                    if col in ["total_outer_loops", "total_inner_loops", "outer_loop", "inner_loop", "phase"]:
-                        db.execute_sql(f'ALTER TABLE {table} ADD COLUMN {col} INTEGER DEFAULT 0')
-                    else:
-                        db.execute_sql(f'ALTER TABLE {table} ADD COLUMN {col} TEXT')
-        
+        db.create_tables([SchemaVersion, RefactorHistory, OrchestrationLog], safe=True)
+
+        current_version = self._get_schema_version()
+        if current_version >= SCHEMA_VERSION:
+            db.close()
+            return
+
+        # Migration v1 -> v2: add columns
+        if current_version < 2:
+            columns = {
+                "refactorhistory": ["exit_status", "final_intent", "final_plan", "total_outer_loops", "total_inner_loops"],
+                "orchestrationlog": ["phase", "outer_loop", "inner_loop"]
+            }
+            for table, cols in columns.items():
+                existing_cols = [c.name for c in db.get_columns(table)]
+                for col in cols:
+                    if col not in existing_cols:
+                        print(f"DB Migration: Adding column {col} to {table}...")
+                        if col in ("total_outer_loops", "total_inner_loops", "outer_loop", "inner_loop", "phase"):
+                            db.execute_sql(f'ALTER TABLE {table} ADD COLUMN {col} INTEGER DEFAULT 0')
+                        else:
+                            db.execute_sql(f'ALTER TABLE {table} ADD COLUMN {col} TEXT')
+
+        self._set_schema_version(SCHEMA_VERSION)
         db.close()
+
+    def _get_schema_version(self) -> int:
+        try:
+            row = SchemaVersion.select().first()
+            return row.version if row else 0
+        except peewee.OperationalError:
+            return 0
+
+    def _set_schema_version(self, version: int) -> None:
+        SchemaVersion.delete().execute()
+        SchemaVersion.create(version=version)
 
     def create_session(self, id: str, instruction: str, original_code: str) -> None:
         """Initializes a refactoring session in the database."""

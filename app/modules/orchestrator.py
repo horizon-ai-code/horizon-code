@@ -37,10 +37,15 @@ class OrchestrationState(BaseModel):
 
     # Loop Counters
     strategy_iter: int = 1  # Outer Loop (Max 3)
+    strategy_iter_incremented: bool = False
     syntax_iter: int = 0  # Inner Loop (Max 3)
 
     # Diagnostic Memory
     cumulative_feedback: List[Dict] = []
+    feedback_cap: int = 3
+
+    # Syntax Healing
+    syntax_error_context: Optional[Dict] = None
 
     # Lifecycle
     current_phase: int = 1
@@ -50,6 +55,16 @@ class OrchestrationState(BaseModel):
     original_complexity: int = 0
     previous_fault_count: int = 999
     fault_stall_count: int = 0
+
+    def add_feedback(self, entry: Dict) -> None:
+        self.cumulative_feedback.append(entry)
+        if len(self.cumulative_feedback) > self.feedback_cap:
+            self.cumulative_feedback.pop(0)
+
+    def extend_feedback(self, entries: List[Dict]) -> None:
+        self.cumulative_feedback.extend(entries)
+        while len(self.cumulative_feedback) > self.feedback_cap:
+            self.cumulative_feedback.pop(0)
 
 
 class Orchestrator:
@@ -142,6 +157,7 @@ class Orchestrator:
         except Exception as e:
             await tracker.stop_tracking()
             print(f"Orchestration Error: {e}")
+            await client.send_status(role=Role.System, content=f"Error: {str(e)[:200]}")
             raise e
         finally:
             await self.agent_service.unload()
@@ -150,6 +166,7 @@ class Orchestrator:
         self, client: ClientConnection, state: OrchestrationState
     ) -> None:
         """Phase 2: The Strategy Block (Inference 1 & 2)."""
+        state.strategy_iter_incremented = False
         # Step 3: Classifier
         if not state.intent_packet or state.strategy_iter > 1:
             await self._notify(
@@ -234,7 +251,23 @@ class Orchestrator:
         await self.agent_service.swap(self.model_config["generator"])
         await self.agent_service.clear_context()
 
-        coder_prompt = f"Modification Plan: {json.dumps(state.active_plan)}\nBase Code: <code>{state.base_code}</code>"
+        if state.syntax_error_context:
+            ctx = state.syntax_error_context
+            coder_prompt = (
+                f"Modification Plan: {json.dumps(state.active_plan)}\n"
+                f"Base Code: <code>{state.base_code}</code>\n\n"
+                f"### PREVIOUS SYNTAX ERROR (Attempt {ctx['attempt']}/3)\n"
+                f"{ctx['error']}\n\n"
+                f"### CURRENT BROKEN CODE\n"
+                f"<code>{ctx['broken_code']}</code>\n\n"
+                f"Fix the syntax error. Output only valid Java wrapped in <code> tags."
+            )
+        else:
+            coder_prompt = (
+                f"Modification Plan: {json.dumps(state.active_plan)}\n"
+                f"Base Code: <code>{state.base_code}</code>"
+            )
+
         messages: List[ChatCompletionRequestMessage] = [
             {"role": "system", "content": self.prompts["generator"]["coder"]},
             {"role": "user", "content": coder_prompt},
@@ -249,20 +282,34 @@ class Orchestrator:
         new_code = ResponseParser.extract_xml(coder_text, "code")
         if new_code:
             state.working_code = new_code
+            state.syntax_iter = 0
+            state.syntax_error_context = None
             await self._notify(
                 client, Role.Generator, "Code refactored.", content=new_code
             )
             state.current_phase = 4
             print(new_code)
         else:
-            # Syntax fail at the gate
-            state.cumulative_feedback.append(
+            # Syntax fail at the gate — no <code> block found
+            state.syntax_iter += 1
+            if state.syntax_iter <= 3:
+                state.syntax_error_context = {
+                    "attempt": state.syntax_iter,
+                    "error": "No <code> block found in generator output.",
+                    "broken_code": state.working_code,
+                }
+                state.current_phase = 3
+                return
+            state.add_feedback(
                 {
                     "failure_tier": FailureTier.TIER_1_SYNTAX,
-                    "error": "No <code> block found.",
+                    "error": "No <code> block found after 3 attempts.",
                 }
             )
-            state.strategy_iter += 1
+            if not state.strategy_iter_incremented:
+                state.strategy_iter += 1
+                state.strategy_iter_incremented = True
+            state.syntax_iter = 0
             state.current_phase = 2
 
     async def _run_phase_4(
@@ -289,15 +336,20 @@ class Orchestrator:
                     Role.Validator,
                     f"Syntax Fail (Attempt {state.syntax_iter}). Healing...",
                 )
-                # Stay in Phase 4, but effectively it loops back to Phase 3/Step 6 for healing
-                # Here we just transition back to Ph 3 with special feedback
+                raw_errors = syntax_res.get("errors", [])
+                raw_error = raw_errors[0] if raw_errors else "Unknown syntax error"
+                state.syntax_error_context = {
+                    "attempt": state.syntax_iter,
+                    "error": self.validator.format_syntax_error(raw_error),
+                    "broken_code": state.working_code,
+                }
                 state.current_phase = 3
                 return
             else:
                 await self._notify(
                     client, Role.Validator, "Syntax Unrecoverable. Revising strategy."
                 )
-                state.cumulative_feedback.append(
+                state.add_feedback(
                     {
                         "failure_tier": FailureTier.TIER_1_SYNTAX,
                         "error": "Persistent syntax errors after 3 heals.",
@@ -315,18 +367,57 @@ class Orchestrator:
         # Step 8: Tier 2 - Structural
         findings = []
 
-        # Check A: Complexity
-        current_cc = self.validator.get_complexity(state.working_code)
-        if current_cc > state.original_complexity:
-            findings.append(
-                ValidationFinding(
-                    failure_tier=FailureTier.TIER_2_A_COMPLEXITY,
-                    error_report=ErrorReport(
-                        message=f"CC increased from {state.original_complexity} to {current_cc}"
-                    ),
-                    recovery_hint="Simplify logic to maintain or reduce complexity.",
+        # Check A: Complexity (per-intent routing)
+        assert state.intent_packet is not None
+        intent_enum = RefactorIntent(state.intent_packet["specific_intent"])
+        cc_rule = self._get_cc_rule(intent_enum)
+        current_cc = state.original_complexity
+
+        if cc_rule == "SKIP":
+            pass
+        elif cc_rule == "EXTRACT_RULE":
+            target_method = state.intent_packet.get("scope_anchor", {}).get("member", "")
+            if target_method:
+                orig_method_cc = self.validator.get_method_complexity(
+                    state.base_code, target_method
                 )
-            )
+                refac_method_cc = self.validator.get_method_complexity(
+                    state.working_code, target_method
+                )
+                if orig_method_cc is not None and refac_method_cc is not None:
+                    if refac_method_cc > orig_method_cc:
+                        findings.append(
+                            ValidationFinding(
+                                failure_tier=FailureTier.TIER_2_A_COMPLEXITY,
+                                error_report=ErrorReport(
+                                    message=f"CC of target method '{target_method}' increased from {orig_method_cc} to {refac_method_cc}"
+                                ),
+                                recovery_hint="Ensure the source method's complexity decreases or stays the same after extraction.",
+                            )
+                        )
+                elif refac_method_cc is None:
+                    findings.append(
+                        ValidationFinding(
+                            failure_tier=FailureTier.TIER_2_A_COMPLEXITY,
+                            error_report=ErrorReport(
+                                message=f"Target method '{target_method}' not found in refactored code."
+                            ),
+                            recovery_hint="Preserve the target method name in the refactored output.",
+                        )
+                    )
+        else:
+            current_cc = self.validator.get_complexity(state.working_code)
+            threshold = state.original_complexity + (1 if cc_rule == "LOOSENED" else 0)
+            if current_cc > threshold:
+                findings.append(
+                    ValidationFinding(
+                        failure_tier=FailureTier.TIER_2_A_COMPLEXITY,
+                        error_report=ErrorReport(
+                            message=f"CC increased from {state.original_complexity} to {current_cc} (limit: {threshold})"
+                        ),
+                        recovery_hint="Simplify logic to maintain or reduce complexity.",
+                    )
+                )
 
         # Check B: Boundary Verification
         target_scopes = []
@@ -366,8 +457,9 @@ class Orchestrator:
             if intent_finding:
                 findings.append(intent_finding)
 
+        current_cc_val = current_cc if cc_rule not in ("SKIP", "EXTRACT_RULE") else state.original_complexity
         print(
-            f"\\n--- Validator Structural Checks ---\\nComplexity Check: {current_cc} (Original: {state.original_complexity})\\nBoundary check found issue: {bool(boundary_finding)}\\nIntent check found issue: {bool(intent_finding)}\\nTotal findings: {len(findings)}\\n-----------------------------------"
+            f"\\n--- Validator Structural Checks ---\\nComplexity Check: {current_cc_val} (Original: {state.original_complexity})\\nBoundary check found issue: {bool(boundary_finding)}\\nIntent check found issue: {bool(intent_finding)}\\nTotal findings: {len(findings)}\\n-----------------------------------"
         )
         if findings:
             current_fault_count = len(findings)
@@ -383,8 +475,10 @@ class Orchestrator:
                 f"Structural Checks Failed ({current_fault_count} issues).",
                 content=json.dumps([f.model_dump() for f in findings]),
             )
-            state.cumulative_feedback.extend([f.model_dump() for f in findings])
-            state.strategy_iter += 1
+            state.extend_feedback([f.model_dump() for f in findings])
+            if not state.strategy_iter_incremented:
+                state.strategy_iter += 1
+                state.strategy_iter_incremented = True
             state.syntax_iter = 0
             state.current_phase = 2
         else:
@@ -426,10 +520,12 @@ class Orchestrator:
             state.current_phase = 6
         else:
             await self._notify(client, Role.Judge, "Audit requested revision.")
-            state.cumulative_feedback.append(
+            state.add_feedback(
                 {"failure_tier": FailureTier.TIER_3_JUDGE, "error": audit_res.issues}
             )
-            state.strategy_iter += 1
+            if not state.strategy_iter_incremented:
+                state.strategy_iter += 1
+                state.strategy_iter_incremented = True
             state.current_phase = 2
 
     async def _run_phase_6(
@@ -545,6 +641,24 @@ class Orchestrator:
         except Exception as e:
             print(f"Failed to parse insights JSON: {e}")
             return text.strip()
+
+    @staticmethod
+    def _get_cc_rule(intent: RefactorIntent) -> str:
+        rules: Dict[RefactorIntent, str] = {
+            RefactorIntent.FLATTEN_CONDITIONAL: "STRICT",
+            RefactorIntent.DECOMPOSE_CONDITIONAL: "STRICT",
+            RefactorIntent.CONSOLIDATE_CONDITIONAL: "STRICT",
+            RefactorIntent.REMOVE_CONTROL_FLAG: "STRICT",
+            RefactorIntent.REPLACE_LOOP_WITH_PIPELINE: "STRICT",
+            RefactorIntent.SPLIT_LOOP: "LOOSENED",
+            RefactorIntent.EXTRACT_METHOD: "EXTRACT_RULE",
+            RefactorIntent.INLINE_METHOD: "SKIP",
+            RefactorIntent.EXTRACT_VARIABLE: "STRICT",
+            RefactorIntent.INLINE_VARIABLE: "STRICT",
+            RefactorIntent.EXTRACT_CONSTANT: "STRICT",
+            RefactorIntent.RENAME_SYMBOL: "STRICT",
+        }
+        return rules.get(intent, "STRICT")
 
     async def _notify(
         self,

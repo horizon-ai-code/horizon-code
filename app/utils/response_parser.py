@@ -14,6 +14,12 @@ class ResponseParser:
         # Strip thinking blocks first
         text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
         
+        # Strip preamble before first <code> tag (for model that talks before generating)
+        if tag == "code":
+            first = text.find(f"<{tag}")
+            if first > 0:
+                text = text[first:]
+        
         pattern = rf"<{tag}\b[^>]*>(.*?)</{tag}>"
         match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
         
@@ -21,8 +27,8 @@ class ResponseParser:
             content = match.group(1).strip()
             # Basic Java syntax validation if it's a 'code' tag
             if tag == "code":
-                if "{" not in content and ";" not in content:
-                    return None # Likely not valid code
+                if len(content) < 5 or ("{" not in content and ";" not in content):
+                    return None
             return content
         return None
 
@@ -60,15 +66,9 @@ class ResponseParser:
         json_str = re.sub(r'\bTrue\b', 'true', json_str)
         json_str = re.sub(r'\bFalse\b', 'false', json_str)
 
-        try:
-            return model.model_validate_json(json_str)
-        except ValidationError as e:
-            try:
-                # Remove trailing commas before closing braces/brackets
-                cleaned_json = re.sub(r",\s*([\]}])", r"\1", json_str)
-                return model.model_validate_json(cleaned_json)
-            except:
-                raise e
+        # Proactively remove trailing commas before closing braces/brackets
+        cleaned_json = re.sub(r",\s*([\]}])", r"\1", json_str)
+        return model.model_validate_json(cleaned_json)
 
     @staticmethod
     def parse_guaranteed(text: Optional[str], tag: str, model: Optional[Type[T]] = None) -> Any:
