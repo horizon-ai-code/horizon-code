@@ -26,7 +26,6 @@ class TestConnectionManager(unittest.IsolatedAsyncioTestCase):
         """Test that send_result sends model names through WebSocket."""
         await self.client_connection.send_result(
             final_code="code",
-            insights="insights",
             original_complexity=10,
             refactored_complexity=5,
             performance_metrics={},
@@ -41,7 +40,6 @@ class TestConnectionManager(unittest.IsolatedAsyncioTestCase):
             "code": "code",
             "original_complexity": 10,
             "refactored_complexity": 5,
-            "insights": "insights",
             "performance": {},
             "planner_model": "Planner Model",
             "generator_model": "Generator Model",

@@ -2,11 +2,13 @@ import asyncio
 import json
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
-from app.modules.orchestrator import Orchestrator
+
 from app.modules.agent_service import AgentService
-from app.modules.validator import Validator
 from app.modules.context_manager import DatabaseManager
-from app.utils.types import Role, ExitStatus
+from app.modules.orchestrator import Orchestrator
+from app.modules.validator import Validator
+from app.utils.types import ExitStatus, Role
+
 
 class MockClient:
     def __init__(self):
@@ -24,6 +26,7 @@ class MockClient:
     async def send_insights(self, insights):
         self.insights = insights
 
+
 class TestOrchestratorFlow(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.agent_service = MagicMock(spec=AgentService)
@@ -31,19 +34,19 @@ class TestOrchestratorFlow(unittest.IsolatedAsyncioTestCase):
         self.agent_service.swap = AsyncMock()
         self.agent_service.unload = AsyncMock()
         self.agent_service.clear_context = AsyncMock()
-        
+
         self.validator = Validator()
         self.db = MagicMock(spec=DatabaseManager)
-        
+
         self.mock_config = {
             "planner": {"name": "p", "filename": "p"},
             "generator": {"name": "g", "filename": "g"},
-            "judge": {"name": "j", "filename": "j"}
+            "judge": {"name": "j", "filename": "j"},
         }
         self.mock_prompts = {
             "planner": {"classifier": "c", "architect": "a"},
             "generator": {"coder": "co"},
-            "judge": {"auditor": "au", "insights": "i"}
+            "judge": {"auditor": "au", "insights": "i"},
         }
 
     @patch("builtins.open")
@@ -51,33 +54,62 @@ class TestOrchestratorFlow(unittest.IsolatedAsyncioTestCase):
     async def test_full_success_flow(self, mock_yaml, mock_open):
         mock_yaml.side_effect = [self.mock_config, self.mock_prompts]
         orch = Orchestrator(self.agent_service, self.validator, self.db)
-        
+
         # Define LLM response sequence
         responses = [
             # Ph2: Classifier
-            json.dumps({"classification_scratchpad": "t", "intent_packet": {"refactor_category": "CONTROL_FLOW", "specific_intent": "FLATTEN_CONDITIONAL", "scope_anchor": {"class": "A", "member": "m", "unit_type": "METHOD_UNIT"}}}),
+            json.dumps(
+                {
+                    "classification_scratchpad": "t",
+                    "intent_packet": {
+                        "refactor_category": "CONTROL_FLOW",
+                        "specific_intent": "FLATTEN_CONDITIONAL",
+                        "scope_anchor": {
+                            "class": "A",
+                            "member": "m",
+                            "unit_type": "METHOD_UNIT",
+                        },
+                    },
+                }
+            ),
             # Ph2: Architect
-            json.dumps({"architect_scratchpad": "t", "ast_modification_plan": {"target_class": "A", "ast_mutations": []}}),
+            json.dumps(
+                {
+                    "architect_scratchpad": "t",
+                    "ast_modification_plan": {"target_class": "A", "ast_mutations": []},
+                }
+            ),
             # Ph3: Coder
             "<code>public class A { void m() { } }</code>",
             # Ph5: Auditor
-            json.dumps({"audit_scratchpad": {"variable_trace": [], "logic_comparison": "ok"}, "verdict": "ACCEPT", "issues": []}),
+            json.dumps(
+                {
+                    "audit_scratchpad": {
+                        "variable_trace": [],
+                        "logic_comparison": "ok",
+                    },
+                    "verdict": "ACCEPT",
+                    "issues": [],
+                }
+            ),
             # Ph6: Insights
-            json.dumps({"insights": [{"title": "Test", "details": "Refactor look good."}]})
+            json.dumps(
+                {"insights": [{"title": "Test", "details": "Refactor look good."}]}
+            ),
         ]
-        
+
         async def mock_gen(messages, **kwargs):
             content = responses.pop(0)
             return {"choices": [{"message": {"content": content}}]}
-            
+
         self.agent_service.generate.side_effect = mock_gen
-        
+
         client = MockClient()
         user_code = "public class A { void m() { if(a) { if(b) {} } } }"
         user_instruction = "Flatten it."
-        
-        await orch.execute_orchestration(client, user_code, user_instruction)  # type: ignore[arg-type]
-        
+
+        await orch.execute_orchestration(client, user_code, user_instruction)  # type: ignore
+
         self.assertIsNotNone(client.results)
         self.db.complete_session.assert_called_once()
         # Verify status transitions
@@ -89,5 +121,6 @@ class TestOrchestratorFlow(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any("Ph5" in m for m in status_msgs))
         self.assertTrue(any("Ph6" in m for m in status_msgs))
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     unittest.main()

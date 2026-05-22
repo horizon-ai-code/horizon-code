@@ -1,6 +1,5 @@
 import asyncio
 import gc
-import json
 from typing import List, Literal, Optional, Type, TypeVar, cast, overload
 
 from llama_cpp import Iterator, Llama
@@ -182,7 +181,9 @@ class AgentService:
                     )
                 return cast(Iterator[CreateChatCompletionStreamResponse], result)
 
-            iterator: Iterator[CreateChatCompletionStreamResponse] = await asyncio.to_thread(create_generator)
+            iterator: Iterator[
+                CreateChatCompletionStreamResponse
+            ] = await asyncio.to_thread(create_generator)
 
             if stream:
                 return iterator
