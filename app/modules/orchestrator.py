@@ -47,6 +47,13 @@ class OrchestrationState(BaseModel):
     # Syntax Healing
     syntax_error_context: Optional[Dict] = None
 
+    # Sub-Step Decomposition
+    architect_analysis: Optional[Dict] = None
+
+    # Generator Self-Review
+    generator_self_review: Optional[Dict] = None
+    self_review_attempts: int = 0
+
     # Lifecycle
     current_phase: int = 1
     exit_status: ExitStatus = ExitStatus.PROCESSING
