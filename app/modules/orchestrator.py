@@ -172,7 +172,7 @@ class Orchestrator:
     async def _run_phase_2(
         self, client: ClientConnection, state: OrchestrationState
     ) -> None:
-        """Phase 2: The Strategy Block (Inference 1 & 2)."""
+        """Phase 2: The Strategy Block (Inference 1, 2, 3)."""
         state.strategy_iter_incremented = False
         # Step 3: Classifier
         if not state.intent_packet or state.strategy_iter > 1:
@@ -216,16 +216,64 @@ class Orchestrator:
         # Step 4: Cognitive Reset
         await self.agent_service.clear_context()
 
-        # Step 5: Architect
+        # Step 5a: Architect ANALYSIS (NEW)
         await self._notify(
-            client, Role.Planner, "Ph2: Architecting modification plan...", phase=2
+            client, Role.Planner, "Ph2: Analyzing code structure...", phase=2
         )
 
-        arch_prompt = f"Intent Packet: {json.dumps(state.intent_packet)}\n User Instruction: {state.user_instruction}\n Code: <code>{state.base_code}</code>"
+        analysis_prompt = (
+            f"Intent Packet: {json.dumps(state.intent_packet)}\n"
+            f"User Instruction: {state.user_instruction}\n"
+            f"Code: <code>{state.base_code}</code>"
+        )
+        if state.cumulative_feedback:
+            analysis_prompt += f"\n\n### PREVIOUS ATTEMPT FEEDBACK\n{json.dumps(state.cumulative_feedback, indent=2)}"
+
+        messages = [
+            {"role": "system", "content": self.prompts["planner"]["architect_analysis"]},
+            {"role": "user", "content": analysis_prompt},
+        ]
+
+        raw = await self.agent_service.generate(
+            messages, temp=0.1, max_tokens=1024
+        )
+        analysis_text = raw["choices"][0]["message"].get("content") or ""
+        print(
+            f"\n--- Planner Analysis Output ---\n{analysis_text}\n-------------------------------"
+        )
+
+        try:
+            state.architect_analysis = json.loads(
+                ResponseParser.extract_json_text(analysis_text)
+            )
+        except Exception:
+            state.architect_analysis = {}
+
+        await self._notify(
+            client,
+            Role.Planner,
+            "Structure analysis complete.",
+            content=json.dumps(state.architect_analysis),
+        )
+
+        # Step 4b: Cognitive Reset between sub-steps
+        await self.agent_service.clear_context()
+
+        # Step 5c: Architect SYNTHESIS (MODIFIED)
+        await self._notify(
+            client, Role.Planner, "Ph2: Designing mutation plan...", phase=2
+        )
+
+        arch_prompt = (
+            f"Analysis: {json.dumps(state.architect_analysis)}\n"
+            f"Intent: {json.dumps(state.intent_packet)}\n"
+            f"Instruction: {state.user_instruction}\n"
+            f"Code: <code>{state.base_code}</code>"
+        )
         if state.cumulative_feedback:
             arch_prompt += f"\n\n### PREVIOUS ATTEMPT FEEDBACK\n{json.dumps(state.cumulative_feedback, indent=2)}"
 
-        messages: List[ChatCompletionRequestMessage] = [
+        messages = [
             {"role": "system", "content": self.prompts["planner"]["architect"]},
             {"role": "user", "content": arch_prompt},
         ]
