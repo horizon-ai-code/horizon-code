@@ -44,8 +44,8 @@ class TestOrchestratorFlow(unittest.IsolatedAsyncioTestCase):
             "judge": {"name": "j", "filename": "j"},
         }
         self.mock_prompts = {
-            "planner": {"classifier": "c", "architect": "a"},
-            "generator": {"coder": "co"},
+            "planner": {"classifier": "c", "architect": "a", "architect_analysis": "an"},
+            "generator": {"coder": "co", "coder_review": "cr"},
             "judge": {"auditor": "au", "insights": "i"},
         }
 
@@ -72,6 +72,16 @@ class TestOrchestratorFlow(unittest.IsolatedAsyncioTestCase):
                     },
                 }
             ),
+            # Ph2: Architect Analysis
+            json.dumps(
+                {
+                    "analysis_scratchpad": "t",
+                    "primary_targets": ["m"],
+                    "secondary_targets": [],
+                    "new_structures_needed": [],
+                    "must_preserve": [],
+                }
+            ),
             # Ph2: Architect
             json.dumps(
                 {
@@ -81,6 +91,17 @@ class TestOrchestratorFlow(unittest.IsolatedAsyncioTestCase):
             ),
             # Ph3: Coder
             "<code>public class A { void m() { } }</code>",
+            # Ph3: Self-Review -> PASS
+            json.dumps(
+                {
+                    "review_scratchpad": "ok",
+                    "all_mutations_applied": True,
+                    "extra_additions": [],
+                    "changed_literals": [],
+                    "syntax_issues": [],
+                    "verdict": "PASS",
+                }
+            ),
             # Ph5: Auditor
             json.dumps(
                 {
@@ -120,6 +141,329 @@ class TestOrchestratorFlow(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any("Ph4" in m for m in status_msgs))
         self.assertTrue(any("Ph5" in m for m in status_msgs))
         self.assertTrue(any("Ph6" in m for m in status_msgs))
+
+    async def test_architect_split_flow(self):
+        """Architect analysis call produces targets list, synthesis produces valid plan."""
+        mock_yaml = MagicMock()
+        mock_yaml.side_effect = [self.mock_config, self.mock_prompts]
+        mock_open = MagicMock()
+
+        with patch("builtins.open", mock_open), patch("yaml.safe_load", mock_yaml):
+            orch = Orchestrator(self.agent_service, self.validator, self.db)
+
+            responses = [
+                json.dumps({
+                    "classification_scratchpad": "t",
+                    "intent_packet": {
+                        "refactor_category": "CONTROL_FLOW",
+                        "specific_intent": "FLATTEN_CONDITIONAL",
+                        "scope_anchor": {"class": "A", "member": "m", "unit_type": "METHOD_UNIT"},
+                    },
+                }),
+                json.dumps({
+                    "analysis_scratchpad": "Target is method m with nested ifs",
+                    "primary_targets": ["m"],
+                    "secondary_targets": [],
+                    "new_structures_needed": [],
+                    "must_preserve": ["Exception: IllegalArgumentException"],
+                }),
+                json.dumps({
+                    "architect_scratchpad": "Mapping analysis to mutations",
+                    "ast_modification_plan": {
+                        "target_class": "A",
+                        "ast_mutations": [
+                            {
+                                "action": "MODIFY_METHOD",
+                                "target": "m",
+                                "details": {
+                                    "modifiers": ["public"],
+                                    "type": "void",
+                                    "parameters": [],
+                                    "logic_changes": ["Flatten nested ifs"],
+                                    "body_abstract": "Use guard clauses"
+                                },
+                            }
+                        ],
+                    },
+                }),
+                "<code>public class A { void m() { if(!a) throw new IllegalArgumentException(); doWork(); } }</code>",
+                json.dumps({"review_scratchpad": "ok", "all_mutations_applied": True, "extra_additions": [], "changed_literals": [], "syntax_issues": [], "verdict": "PASS"}),
+                json.dumps({
+                    "audit_scratchpad": {"variable_trace": [], "logic_comparison": "ok"},
+                    "verdict": "ACCEPT",
+                    "issues": [],
+                }),
+                json.dumps({"insights": [{"title": "T", "details": "D"}]}),
+            ]
+
+            async def mock_gen(messages, **kwargs):
+                content = responses.pop(0)
+                return {"choices": [{"message": {"content": content}}]}
+
+            self.agent_service.generate.side_effect = mock_gen
+
+            client = MockClient()
+            user_code = "public class A { void m() { if(a) { if(b) { doWork(); } } } }"
+            user_instruction = "Flatten it."
+
+            await orch.execute_orchestration(client, user_code, user_instruction)
+
+            self.assertIsNotNone(client.results)
+            status_msgs = [s[1] for s in client.statuses]
+            self.assertTrue(any("Ph6" in m for m in status_msgs))
+
+    async def test_generator_self_review_pass(self):
+        """Clean refactored code passes self-review and advances to phase 4."""
+        mock_yaml = MagicMock()
+        mock_yaml.side_effect = [self.mock_config, self.mock_prompts]
+        mock_open = MagicMock()
+
+        with patch("builtins.open", mock_open), patch("yaml.safe_load", mock_yaml):
+            orch = Orchestrator(self.agent_service, self.validator, self.db)
+
+            responses = [
+                json.dumps({
+                    "classification_scratchpad": "t",
+                    "intent_packet": {
+                        "refactor_category": "CONTROL_FLOW",
+                        "specific_intent": "FLATTEN_CONDITIONAL",
+                        "scope_anchor": {"class": "A", "member": "m", "unit_type": "METHOD_UNIT"},
+                    },
+                }),
+                json.dumps({
+                    "analysis_scratchpad": "Flatten nested ifs in m",
+                    "primary_targets": ["m"],
+                    "secondary_targets": [],
+                    "new_structures_needed": [],
+                    "must_preserve": [],
+                }),
+                json.dumps({
+                    "architect_scratchpad": "Map to mutations",
+                    "ast_modification_plan": {
+                        "target_class": "A",
+                        "ast_mutations": [
+                            {"action": "MODIFY_METHOD", "target": "m", "details": {"modifiers": [], "type": "void", "parameters": [], "logic_changes": ["Flatten"], "body_abstract": "Guard clauses"}},
+                        ],
+                    },
+                }),
+                "<code>class A { void m() { if(!a) return; if(!b) return; } }</code>",
+                json.dumps({"review_scratchpad": "ok", "all_mutations_applied": True, "extra_additions": [], "changed_literals": [], "syntax_issues": [], "verdict": "PASS"}),
+                json.dumps({
+                    "audit_scratchpad": {"variable_trace": [], "logic_comparison": "ok"},
+                    "verdict": "ACCEPT",
+                    "issues": [],
+                }),
+                json.dumps({"insights": [{"title": "T", "details": "D"}]}),
+            ]
+
+            async def mock_gen(messages, **kwargs):
+                content = responses.pop(0)
+                return {"choices": [{"message": {"content": content}}]}
+
+            self.agent_service.generate.side_effect = mock_gen
+
+            client = MockClient()
+            user_code = "class A { void m() { if(a) { if(b) {} } } }"
+            user_instruction = "Flatten it."
+
+            await orch.execute_orchestration(client, user_code, user_instruction)
+
+            self.assertIsNotNone(client.results)
+            status_msgs = [s[1] for s in client.statuses]
+            self.assertTrue(any("Ph4" in m for m in status_msgs))
+
+    async def test_generator_self_review_fail_retry(self):
+        """Failed self-review triggers coder retry with review issues in error context."""
+        mock_yaml = MagicMock()
+        mock_yaml.side_effect = [self.mock_config, self.mock_prompts]
+        mock_open = MagicMock()
+
+        with patch("builtins.open", mock_open), patch("yaml.safe_load", mock_yaml):
+            orch = Orchestrator(self.agent_service, self.validator, self.db)
+
+            responses = [
+                json.dumps({
+                    "classification_scratchpad": "t",
+                    "intent_packet": {
+                        "refactor_category": "CONTROL_FLOW",
+                        "specific_intent": "FLATTEN_CONDITIONAL",
+                        "scope_anchor": {"class": "A", "member": "m", "unit_type": "METHOD_UNIT"},
+                    },
+                }),
+                json.dumps({
+                    "analysis_scratchpad": "Flatten nested ifs",
+                    "primary_targets": ["m"],
+                    "secondary_targets": [],
+                    "new_structures_needed": [],
+                    "must_preserve": [],
+                }),
+                json.dumps({
+                    "architect_scratchpad": "Map to mutations",
+                    "ast_modification_plan": {
+                        "target_class": "A",
+                        "ast_mutations": [
+                            {"action": "MODIFY_METHOD", "target": "m", "details": {"modifiers": ["public"], "type": "void", "parameters": [], "logic_changes": ["Flatten"], "body_abstract": "Flattened code"}},
+                        ],
+                    },
+                }),
+                "<code>public class A { void m() { if(a) { if(b) { doWork(); } } } }</code>",
+                json.dumps({"review_scratchpad": "Not flattened", "all_mutations_applied": False, "extra_additions": [], "changed_literals": [], "syntax_issues": [], "verdict": "FAIL"}),
+                "<code>public class A { void m() { if(!a) return; if(!b) return; doWork(); } }</code>",
+                json.dumps({"review_scratchpad": "ok", "all_mutations_applied": True, "extra_additions": [], "changed_literals": [], "syntax_issues": [], "verdict": "PASS"}),
+                json.dumps({
+                    "audit_scratchpad": {"variable_trace": [], "logic_comparison": "ok"},
+                    "verdict": "ACCEPT",
+                    "issues": [],
+                }),
+                json.dumps({"insights": [{"title": "T", "details": "D"}]}),
+            ]
+
+            async def mock_gen(messages, **kwargs):
+                content = responses.pop(0)
+                return {"choices": [{"message": {"content": content}}]}
+
+            self.agent_service.generate.side_effect = mock_gen
+
+            client = MockClient()
+            user_code = "public class A { void m() { if(a) { if(b) { doWork(); } } } }"
+            user_instruction = "Flatten it."
+
+            await orch.execute_orchestration(client, user_code, user_instruction)
+
+            self.assertIsNotNone(client.results)
+            status_msgs = [s[1] for s in client.statuses]
+            self.assertTrue(any("Self-reviewing" in m for m in status_msgs))
+
+    async def test_generator_self_review_fail_exhausted(self):
+        """After 2 failed self-reviews, proceed to Phase 4 anyway."""
+        mock_yaml = MagicMock()
+        mock_yaml.side_effect = [self.mock_config, self.mock_prompts]
+        mock_open = MagicMock()
+
+        with patch("builtins.open", mock_open), patch("yaml.safe_load", mock_yaml):
+            orch = Orchestrator(self.agent_service, self.validator, self.db)
+
+            responses = [
+                json.dumps({
+                    "classification_scratchpad": "t",
+                    "intent_packet": {
+                        "refactor_category": "STATE_MANAGEMENT",
+                        "specific_intent": "RENAME_SYMBOL",
+                        "scope_anchor": {"class": "A", "member": "foo", "unit_type": "METHOD_UNIT"},
+                    },
+                }),
+                json.dumps({
+                    "analysis_scratchpad": "Rename foo to bar",
+                    "primary_targets": ["foo"],
+                    "secondary_targets": [],
+                    "new_structures_needed": [],
+                    "must_preserve": [],
+                }),
+                json.dumps({
+                    "architect_scratchpad": "Rename mutation",
+                    "ast_modification_plan": {
+                        "target_class": "A",
+                        "ast_mutations": [
+                            {"action": "RENAME_SYMBOL", "target": "foo", "details": {"modifiers": [], "type": "", "parameters": [], "logic_changes": ["Rename to bar"], "body_abstract": ""}},
+                        ],
+                    },
+                }),
+                "<code>class A { void bar() { int x = 1; } }</code>",
+                json.dumps({"review_scratchpad": "wrong", "all_mutations_applied": False, "extra_additions": [], "changed_literals": [], "syntax_issues": [], "verdict": "FAIL"}),
+                "<code>class A { void bar() { int x = 1; } }</code>",
+                json.dumps({"review_scratchpad": "still wrong", "all_mutations_applied": False, "extra_additions": [], "changed_literals": [], "syntax_issues": [], "verdict": "FAIL"}),
+                "<code>class A { void bar() { int x = 1; } }</code>",
+                json.dumps({"review_scratchpad": "still wrong x2", "all_mutations_applied": False, "extra_additions": [], "changed_literals": [], "syntax_issues": [], "verdict": "FAIL"}),
+                json.dumps({
+                    "audit_scratchpad": {"variable_trace": [], "logic_comparison": "ok"},
+                    "verdict": "ACCEPT",
+                    "issues": [],
+                }),
+                json.dumps({"insights": [{"title": "T", "details": "D"}]}),
+            ]
+
+            async def mock_gen(messages, **kwargs):
+                content = responses.pop(0)
+                return {"choices": [{"message": {"content": content}}]}
+
+            self.agent_service.generate.side_effect = mock_gen
+
+            client = MockClient()
+            user_code = "class A { void foo() { int x = 1; } }"
+            user_instruction = "Rename foo to bar."
+
+            await orch.execute_orchestration(client, user_code, user_instruction)
+
+            self.assertIsNotNone(client.results)
+            self.db.complete_session.assert_called_once()
+
+    async def test_auditor_gets_plan_context(self):
+        """Phase 5 auditor prompt contains plan summary and mutations list."""
+        mock_yaml = MagicMock()
+        mock_yaml.side_effect = [self.mock_config, self.mock_prompts]
+        mock_open = MagicMock()
+
+        with patch("builtins.open", mock_open), patch("yaml.safe_load", mock_yaml):
+            orch = Orchestrator(self.agent_service, self.validator, self.db)
+
+            responses = [
+                json.dumps({
+                    "classification_scratchpad": "t",
+                    "intent_packet": {
+                        "refactor_category": "CONTROL_FLOW",
+                        "specific_intent": "FLATTEN_CONDITIONAL",
+                        "scope_anchor": {"class": "OrderProcessor", "member": "processOrder", "unit_type": "METHOD_UNIT"},
+                    },
+                }),
+                json.dumps({
+                    "analysis_scratchpad": "Target is processOrder",
+                    "primary_targets": ["processOrder"],
+                    "secondary_targets": [],
+                    "new_structures_needed": [],
+                    "must_preserve": [],
+                }),
+                json.dumps({
+                    "architect_scratchpad": "Plan mutations",
+                    "ast_modification_plan": {
+                        "target_class": "OrderProcessor",
+                        "ast_mutations": [
+                            {"action": "MODIFY_METHOD", "target": "processOrder", "details": {"modifiers": ["public"], "type": "void", "parameters": [], "logic_changes": ["Use guard clauses"], "body_abstract": "Linear validations"}},
+                        ],
+                    },
+                }),
+                "<code>public class OrderProcessor { public void processOrder() { if(!x) return; if(!y) return; doWork(); } }</code>",
+                json.dumps({"review_scratchpad": "ok", "all_mutations_applied": True, "extra_additions": [], "changed_literals": [], "syntax_issues": [], "verdict": "PASS"}),
+                json.dumps({
+                    "audit_scratchpad": {"variable_trace": [], "logic_comparison": "ok"},
+                    "verdict": "ACCEPT",
+                    "issues": [],
+                }),
+                json.dumps({"insights": [{"title": "T", "details": "D"}]}),
+            ]
+
+            captured_prompt = None
+
+            async def mock_gen(messages, **kwargs):
+                nonlocal captured_prompt
+                content = responses.pop(0)
+                if "Plan Context" in str(messages[-1].get("content", "")):
+                    captured_prompt = messages[-1].get("content", "")
+                return {"choices": [{"message": {"content": content}}]}
+
+            self.agent_service.generate.side_effect = mock_gen
+
+            client = MockClient()
+            user_code = "public class OrderProcessor { public void processOrder() { if(x) { if(y) { doWork(); } } } }"
+            user_instruction = "Flatten it."
+
+            await orch.execute_orchestration(client, user_code, user_instruction)
+
+            self.assertIsNotNone(captured_prompt, "Auditor prompt should have been captured")
+            self.assertIn("Plan Context", captured_prompt)
+            self.assertIn("FLATTEN_CONDITIONAL", captured_prompt)
+            self.assertIn("OrderProcessor.processOrder", captured_prompt)
+            self.assertIn("MODIFY_METHOD", captured_prompt)
+            self.assertIn("Mutations:", captured_prompt)
 
 
 if __name__ == "__main__":

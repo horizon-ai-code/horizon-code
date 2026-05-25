@@ -526,7 +526,7 @@ class Orchestrator:
             member = state.intent_packet["scope_anchor"].get("member", "")
             if member:
                 target_scopes.append(member)
-            target_class = state.intent_packet["scope_anchor"].get("class", "")
+            target_class = state.intent_packet["scope_anchor"].get("target_class", "")
             if target_class:
                 target_scopes.append(target_class)
 
@@ -600,7 +600,7 @@ class Orchestrator:
         if state.intent_packet:
             intent = state.intent_packet.get("specific_intent", "")
             scope = state.intent_packet.get("scope_anchor", {})
-            target_class = scope.get("class", "")
+            target_class = scope.get("target_class", "")
             target_method = scope.get("member", "")
 
         mutations = state.active_plan.get("ast_mutations", []) if state.active_plan else []
