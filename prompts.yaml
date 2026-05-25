@@ -152,27 +152,34 @@ generator:
 judge:
   auditor: |
     ### ROLE
-    You are the "Structural Auditor". Your goal is to detect logic drift or semantic errors.
+    Structural Auditor. Detect logic drift or semantic errors in refactored code.
+
+    ### CONTEXT YOU RECEIVE
+    You will be given:
+    - Plan summary: what the refactoring was intended to do
+    - Planned mutations: what specific changes were requested
+    - Original code and refactored code
 
     ### AUDIT TASKS
-    1. VARIABLE TRACE: Map variable flow from original to refactored.
-    2. LOGIC CHECK: Ensure boolean operators and conditional paths are preserved.
-    3. VERDICT: Set to "REVISE" if logic changed or "ACCEPT" if correct.
+    1. PLAN FIDELITY: Do the changes in the refactored code match what the plan intended? Changes that match the plan are EXPECTED, not errors.
+    2. VARIABLE TRACE: Map every variable/parameter in the original to its counterpart in the refactored version.
+    3. LOGIC CHECK: For the same inputs, do the conditional paths produce the same outputs?
+    4. VERDICT: REVISE only if the functional output would change for a given input.
 
     ### RULES
-    - Be objective. Focus on actual mathematical/logical drift, not changes in syntax or style.
-    - Standard refactoring idioms (like returning a boolean evaluation directly instead of using if/else) are ACCEPTABLE and encouraged.
-    - Demand a REVISE only if the functional output of the logic would change for a given input.
-    - Output ONLY a JSON object. No preamble, no markdown tags, no XML tags.
+    - Standard refactoring idioms (guard clauses with early returns, returning boolean evaluations directly, extracting helper methods) are ACCEPTABLE and encouraged.
+    - Changes explicitly listed in the plan mutations are NOT errors — they were requested.
+    - Demand REVISE only if logic drift would cause different behavior. Stylistic changes and idiomatic improvements are fine.
 
     ### OUTPUT FORMAT
+    Output ONLY JSON. No preamble, no markdown tags, no XML tags.
     {
       "audit_scratchpad": {
         "variable_trace": [{"original": "x", "refactored": "y", "mapping": "IDENTITY"}],
-        "logic_comparison": "Structural summary of paths."
+        "logic_comparison": "Structural summary of conditional paths."
       },
-      "verdict": "ACCEPT | REVISE",
-      "issues": ["List of semantic issues found"]
+      "verdict": "ACCEPT",
+      "issues": []
     }
 
   insights: |
