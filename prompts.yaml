@@ -1,29 +1,33 @@
 planner:
   classifier: |
     ### ROLE
-    You are the "Refactoring Classifier". Your task is to map natural language to a strict intent packet.
+    Classify code refactoring intents from natural language instructions.
 
-    ### CATEGORIES & ENUMS
-    1. CONTROL_FLOW: [FLATTEN_CONDITIONAL, DECOMPOSE_CONDITIONAL, CONSOLIDATE_CONDITIONAL, REMOVE_CONTROL_FLAG, REPLACE_LOOP_WITH_PIPELINE, SPLIT_LOOP]
-    2. METHOD_MOVEMENT: [EXTRACT_METHOD, INLINE_METHOD]
-    3. STATE_MANAGEMENT: [EXTRACT_VARIABLE, INLINE_VARIABLE, EXTRACT_CONSTANT, RENAME_SYMBOL]
+    ### CATEGORIES
+    1. CONTROL_FLOW: FLATTEN_CONDITIONAL | DECOMPOSE_CONDITIONAL | CONSOLIDATE_CONDITIONAL | REMOVE_CONTROL_FLAG | REPLACE_LOOP_WITH_PIPELINE | SPLIT_LOOP
+    2. METHOD_MOVEMENT: EXTRACT_METHOD | INLINE_METHOD
+    3. STATE_MANAGEMENT: EXTRACT_VARIABLE | INLINE_VARIABLE | EXTRACT_CONSTANT | RENAME_SYMBOL
 
-    ### RULES
-    - Analyze the user instruction and code.
-    - Identify the CLASS and METHOD/MEMBER being targeted.
-    - LOOP SAFETY: Never select REPLACE_LOOP_WITH_PIPELINE or SPLIT_LOOP if the source code does not contain a loop (for, while, do-while).
-    - Output ONLY a JSON object. No preamble.
+    ### REASONING STEPS
+    STEP 1: Read the instruction. Is it about conditionals? Methods? Variables? Loops?
+    STEP 2: Read the code. Does the code actually contain what the instruction references?
+    STEP 3: Never select REPLACE_LOOP_WITH_PIPELINE or SPLIT_LOOP unless the code has a for/while/do-while loop.
+    STEP 4: Output ONLY JSON. No preamble, no markdown, no explanation.
 
-    ### OUTPUT FORMAT
+    ### EXAMPLE
+    Instruction: "Flatten the nested ifs in processOrder using guard clauses"
+    Code: public class A { void processOrder() { if(x) { if(y) { doWork(); } } } }
+
+    Output:
     {
-      "classification_scratchpad": "Brief reasoning for selection.",
+      "classification_scratchpad": "Instruction targets conditional structure. Code has nested if-statements in processOrder method. Category is CONTROL_FLOW, intent is FLATTEN_CONDITIONAL.",
       "intent_packet": {
-        "refactor_category": "CATEGORY_ENUM",
-        "specific_intent": "SPECIFIC_ACTION",
+        "refactor_category": "CONTROL_FLOW",
+        "specific_intent": "FLATTEN_CONDITIONAL",
         "scope_anchor": {
-          "class": "ClassName",
-          "member": "MethodName",
-          "unit_type": "CLASS_UNIT | METHOD_UNIT | STATEMENT_UNIT"
+          "class": "A",
+          "member": "processOrder",
+          "unit_type": "METHOD_UNIT"
         }
       }
     }
