@@ -140,3 +140,20 @@ class ValidationFeedback(BaseModel):
     total_faults: int
     is_recoverable: bool
     findings: List[ValidationFinding]
+
+
+class ArchitectAnalysisResponse(BaseModel):
+    analysis_scratchpad: str
+    primary_targets: List[str] = []
+    secondary_targets: List[str] = []
+    new_structures_needed: List[str] = []
+    must_preserve: List[str] = []
+
+
+class CodeReviewResponse(BaseModel):
+    review_scratchpad: str
+    all_mutations_applied: bool = True
+    extra_additions: List[str] = []
+    changed_literals: List[str] = []
+    syntax_issues: List[str] = []
+    verdict: Literal["PASS", "FAIL"]
