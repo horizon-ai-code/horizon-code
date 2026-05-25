@@ -593,7 +593,34 @@ class Orchestrator:
         await self._notify(client, Role.Judge, "Ph5: Running final audit...", phase=5)
         await self.agent_service.swap(self.model_config["judge"])
 
-        audit_prompt = f"Original: <code>{state.base_code}</code>\nRefactored: <code>{state.working_code}</code>\nIntent: {json.dumps(state.intent_packet)}"
+        # Build plan context summary for the auditor
+        intent = ""
+        target_class = ""
+        target_method = ""
+        if state.intent_packet:
+            intent = state.intent_packet.get("specific_intent", "")
+            scope = state.intent_packet.get("scope_anchor", {})
+            target_class = scope.get("class", "")
+            target_method = scope.get("member", "")
+
+        mutations = state.active_plan.get("ast_mutations", []) if state.active_plan else []
+        mutation_actions = [m.get("action", "?") for m in mutations]
+        mutation_targets = [m.get("target", "?") for m in mutations]
+
+        plan_summary = f"Intent: {intent}. Target: {target_class}.{target_method}."
+        mutations_list = (
+            f"Mutations: {', '.join(f'{a}({t})' for a, t in zip(mutation_actions, mutation_targets))}"
+            if mutation_actions
+            else "Mutations: none"
+        )
+
+        audit_prompt = (
+            f"## Plan Context\n{plan_summary}\n{mutations_list}\n\n"
+            f"## Code\n"
+            f"Original: <code>{state.base_code}</code>\n"
+            f"Refactored: <code>{state.working_code}</code>\n"
+            f"Intent: {json.dumps(state.intent_packet)}"
+        )
         messages: List[ChatCompletionRequestMessage] = [
             {"role": "system", "content": self.prompts["judge"]["auditor"]},
             {"role": "user", "content": audit_prompt},
