@@ -11,10 +11,15 @@ planner:
     ### REASONING STEPS
     STEP 1: Read the instruction. Is it about conditionals? Methods? Variables? Loops?
     STEP 2: Read the code. Does the code actually contain what the instruction references?
-    STEP 3: Never select REPLACE_LOOP_WITH_PIPELINE or SPLIT_LOOP unless the code has a for/while/do-while loop.
+    STEP 3: Distinguish CONTROL_FLOW from METHOD_MOVEMENT:
+      - If instruction says "decompose the condition" or "split the loop",
+        classify as CONTROL_FLOW (DECOMPOSE_CONDITIONAL or SPLIT_LOOP),
+        even if the word "extract" appears.
+      - Never select REPLACE_LOOP_WITH_PIPELINE or SPLIT_LOOP unless the code has a for/while/do-while loop.
     STEP 4: Output ONLY JSON. No preamble, no markdown, no explanation.
+      scope_anchor MUST include class, member, and unit_type — use empty string if absent.
 
-    ### EXAMPLE
+    ### EXAMPLE 1 — FLATTEN_CONDITIONAL
     Instruction: "Flatten the nested ifs in processOrder using guard clauses"
     Code: public class A { void processOrder() { if(x) { if(y) { doWork(); } } } }
 
@@ -27,6 +32,24 @@ planner:
         "scope_anchor": {
           "class": "A",
           "member": "processOrder",
+          "unit_type": "METHOD_UNIT"
+        }
+      }
+    }
+
+    ### EXAMPLE 2 — DECOMPOSE_CONDITIONAL
+    Instruction: "Decompose the compound condition in canVote into named booleans: isAdult and isCitizen"
+    Code: public class A { boolean canVote(int age, boolean citizen) { if (age >= 18 && citizen) return true; return false; } }
+
+    Output:
+    {
+      "classification_scratchpad": "Instruction asks to break a compound condition into named boolean variables. Code has a compound condition in canVote. Category is CONTROL_FLOW, intent is DECOMPOSE_CONDITIONAL.",
+      "intent_packet": {
+        "refactor_category": "CONTROL_FLOW",
+        "specific_intent": "DECOMPOSE_CONDITIONAL",
+        "scope_anchor": {
+          "class": "A",
+          "member": "canVote",
           "unit_type": "METHOD_UNIT"
         }
       }
@@ -105,16 +128,13 @@ generator:
     1. Apply mutations in the order listed in the plan
     2. DATA INTEGRITY: Preserve string literals, exception types, and error messages from the original code unless the plan explicitly changes them
     3. CONSTANT USAGE: If the plan defines constants or enums, use their names — do not keep the original numeric literal values
+    4. LOGIC PRESERVATION: For FLATTEN_CONDITIONAL, each original if-condition must map to an equivalent inverted guard clause. Do NOT change which branch executes for a given input. Trace through at least one concrete example before outputting.
 
-    ### ANTI-PATTERNS (DO NOT DO ANY OF THESE)
-    - Do NOT add any method not listed in the plan's ast_mutations
-    - Do NOT remove any method not listed in the plan's ast_mutations
-    - Do NOT change exception types (IllegalArgumentException stays as is, etc.)
-    - Do NOT merge multiple guard clauses or validation checks into one combined check
-    - Do NOT invent new variables, parameters, or classes
-    - Do NOT add comments or documentation (// or /* */)
-    - Do NOT add or remove import statements
-    - Do NOT output any text outside the <code> block
+    ### ANTI-PATTERNS (MOST IMPORTANT — NEVER VIOLATE)
+    1. NEVER merge multiple guard clauses or validation checks into one combined condition with || or &&. Each original throw statement must become its own separate if-check at the top level, even if the result is longer.
+    2. NEVER change exception types (IllegalArgumentException stays as is, etc.)
+    3. NEVER add any method, field, or variable not listed in the plan's ast_mutations
+    4. NEVER use markdown or code fences (```). Output ONLY <code> tags around the code.
 
     ### OUTPUT FORMAT
     Output ONLY the refactored code wrapped in <code> tags. No explanation, no markdown, no preamble.
@@ -136,11 +156,14 @@ judge:
     - Original code and refactored code
 
     ### AUDIT TASKS
-    1. PLAN FIDELITY: Do the changes in the refactored code match what the plan intended? Changes that match the plan are EXPECTED, not errors.
-    2. VARIABLE TRACE: Map every variable/parameter in the original to its counterpart in the refactored version.
-    3. LOGIC CHECK: For the same inputs, do the conditional paths produce the same outputs?
-    4. SIGNATURE CHECK: Compare every method's return type, name, and parameter list between original and refactored code. They must match unless the plan explicitly changes them. Flag any unplanned signature changes.
-    5. VERDICT: REVISE only if the functional output would change for a given input.
+    1. NO-OP DETECTION: If the refactored code is byte-for-byte identical to the original code but the plan lists mutations (ADD_METHOD, ADD_FIELD, RENAME_SYMBOL, etc.), verdict MUST be REVISE with issue "Plan was not executed: code is identical to original."
+    2. PLAN COMPLIANCE: Check that planned changes exist in the refactored code. Planned ADD_METHOD/ADD_FIELD/ADD_CONSTANT items should exist. Planned MODIFY_METHOD targets should show the intended changes. But do NOT flag changes that match the plan as errors — those were requested.
+    3. SIGNATURE CHECK: Compare every method's return type, name, and parameter list. Flag only changes NOT listed in the plan.
+    4. LOGIC CHECK: For the same inputs, do conditional paths produce the same outputs? Trace at least one concrete example.
+
+    ### VERDICT
+    REVISE only if: (a) code is byte-identical despite planned mutations, or (b) logic drift would cause different behavior.
+    ACCEPT if changes match the plan, even if they seem large — planned changes are NOT errors.
 
     ### RULES
     - Standard refactoring idioms (guard clauses with early returns, returning boolean evaluations directly, extracting helper methods) are ACCEPTABLE and encouraged.
@@ -151,8 +174,9 @@ judge:
     Output ONLY JSON. No preamble, no markdown tags, no XML tags.
     {
       "audit_scratchpad": {
-        "variable_trace": [{"original": "x", "refactored": "y", "mapping": "IDENTITY"}],
-        "logic_comparison": "Structural summary of conditional paths."
+        "plan_execution": "Which planned mutations were executed vs missing.",
+        "signature_comparison": "Any unplanned signature changes found.",
+        "logic_comparison": "Structural summary of conditional paths with at least one concrete example."
       },
       "verdict": "ACCEPT",
       "issues": []
