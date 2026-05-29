@@ -15,6 +15,7 @@ from app.utils.paths import MODELS_CONFIG_PATH, PROMPTS_CONFIG_PATH
 from app.utils.performance import PerformanceTracker
 from app.utils.response_parser import ResponseParser
 from app.utils.schemas import (
+    ArchitectAnalysisResponse,
     ASTArchitectResponse,
     ErrorReport,
     IntentClassifierResponse,
@@ -227,7 +228,8 @@ class Orchestrator:
         ]
 
         raw = await self.agent_service.generate(
-            messages, temp=0.1, max_tokens=1024
+            messages, temp=0.1, max_tokens=1024,
+            response_model=ArchitectAnalysisResponse
         )
         analysis_text = raw["choices"][0]["message"].get("content") or ""
         print(
@@ -235,9 +237,10 @@ class Orchestrator:
         )
 
         try:
-            state.architect_analysis = json.loads(
-                ResponseParser.extract_json_text(analysis_text)
+            analysis_model = ResponseParser.extract_json(
+                analysis_text, ArchitectAnalysisResponse
             )
+            state.architect_analysis = analysis_model.model_dump()
         except Exception:
             state.architect_analysis = {}
 

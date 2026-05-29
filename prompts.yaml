@@ -72,6 +72,7 @@ planner:
     3. Map each secondary_target only if it must change (e.g., caller signature update)
     4. Include every item in must_preserve exactly as-is (no modification)
     5. CONCISENESS: One mutation per target. Do not repeat.
+    6. The target field must be ONLY the identifier name (e.g., "methodName"), NOT a full signature.
 
     ### VALID ACTIONS
     ADD_METHOD | REMOVE_METHOD | MODIFY_METHOD | ADD_FIELD | REMOVE_FIELD | ADD_CONSTANT | ADD_ENUM | RENAME_SYMBOL
@@ -115,7 +116,7 @@ planner:
       "analysis_scratchpad": "Reasoning about the code structure and what needs to change",
       "primary_targets": ["methodName"],
       "secondary_targets": ["otherMethod"],
-      "new_structures_needed": ["helperMethod", "CONSTANT_NAME"],
+      "new_structures_needed": [],
       "must_preserve": ["Exception: IllegalArgumentException", "String: 'Order has no items'"]
     }
 
