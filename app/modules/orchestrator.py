@@ -171,7 +171,7 @@ class Orchestrator:
         """Phase 2: The Strategy Block (Inference 1, 2, 3)."""
         state.strategy_iter_incremented = False
         # Step 3: Classifier
-        if not state.intent_packet or state.strategy_iter > 1:
+        if not state.intent_packet:
             await self._notify(
                 client,
                 Role.Planner,
@@ -181,8 +181,6 @@ class Orchestrator:
             await self.agent_service.swap(self.model_config["planner"])
 
             prompt = f"<code>{state.base_code}</code>\n<instruction>{state.user_instruction}</instruction>"
-            if state.cumulative_feedback:
-                prompt += f"\n\n### PREVIOUS ATTEMPT FEEDBACK\n{json.dumps(state.cumulative_feedback, indent=2)}"
 
             messages: List[ChatCompletionRequestMessage] = [
                 {"role": "system", "content": self.prompts["planner"]["classifier"]},
@@ -222,8 +220,6 @@ class Orchestrator:
             f"User Instruction: {state.user_instruction}\n"
             f"Code: <code>{state.base_code}</code>"
         )
-        if state.cumulative_feedback:
-            analysis_prompt += f"\n\n### PREVIOUS ATTEMPT FEEDBACK\n{json.dumps(state.cumulative_feedback, indent=2)}"
 
         messages = [
             {"role": "system", "content": self.prompts["planner"]["architect_analysis"]},
@@ -305,13 +301,12 @@ class Orchestrator:
         if state.syntax_error_context:
             ctx = state.syntax_error_context
             coder_prompt = (
-                f"Modification Plan: {json.dumps(state.active_plan)}\n"
-                f"Base Code: <code>{state.base_code}</code>\n\n"
+                f"Modification Plan: {json.dumps(state.active_plan)}\n\n"
                 f"### PREVIOUS SYNTAX ERROR (Attempt {ctx['attempt']}/3)\n"
                 f"{ctx['error']}\n\n"
                 f"### CURRENT BROKEN CODE\n"
                 f"<code>{ctx['broken_code']}</code>\n\n"
-                f"Fix the syntax error. Output only valid Java wrapped in <code> tags."
+                f"Fix the syntax error above. Output only valid Java wrapped in <code> tags."
             )
         else:
             coder_prompt = (
@@ -324,7 +319,8 @@ class Orchestrator:
             {"role": "user", "content": coder_prompt},
         ]
 
-        raw = await self.agent_service.generate(messages, temp=0.1, max_tokens=2048)
+        heal_temp = 0.3 if state.syntax_error_context else 0.1
+        raw = await self.agent_service.generate(messages, temp=heal_temp, max_tokens=2048)
         coder_text = raw["choices"][0]["message"].get("content") or ""
         print(
             f"\n--- Generator Coder Output ---\n{coder_text}\n----------------------------"
@@ -407,7 +403,9 @@ class Orchestrator:
                         "error": "Persistent syntax errors after 3 heals.",
                     }
                 )
-                state.strategy_iter += 1
+                if not state.strategy_iter_incremented:
+                    state.strategy_iter += 1
+                    state.strategy_iter_incremented = True
                 state.syntax_iter = 0
                 state.current_phase = 2
                 return
@@ -535,6 +533,23 @@ class Orchestrator:
             state.current_phase = 2
         else:
             await self._notify(client, Role.Validator, "Structural Checks Passed.")
+            if (state.active_plan
+                and state.active_plan.get("ast_mutations")
+                and state.working_code.strip() == state.base_code.strip()):
+                await self._notify(
+                    client,
+                    Role.Validator,
+                    "Plan not executed — code unchanged.",
+                )
+                state.add_feedback({
+                    "failure_tier": FailureTier.TIER_3_JUDGE,
+                    "error": "Plan was not executed: code unchanged.",
+                })
+                if not state.strategy_iter_incremented:
+                    state.strategy_iter += 1
+                    state.strategy_iter_incremented = True
+                state.current_phase = 2
+                return
             state.current_phase = 5
 
     async def _run_phase_5(
