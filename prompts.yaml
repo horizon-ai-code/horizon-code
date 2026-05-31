@@ -175,8 +175,7 @@ judge:
     Output ONLY JSON. No preamble, no markdown tags, no XML tags.
     {
       "audit_scratchpad": {
-        "plan_execution": "Which planned mutations were executed vs missing.",
-        "signature_comparison": "Any unplanned signature changes found.",
+        "variable_trace": [{"original": "x", "refactored": "y", "mapping": null}],
         "logic_comparison": "Structural summary of conditional paths with at least one concrete example."
       },
       "verdict": "ACCEPT",
