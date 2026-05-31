@@ -323,7 +323,7 @@ async def run_planner_case(
     harness: ModelTestHarness, case: Dict[str, Any]
 ) -> Dict[str, Any]:
     from app.utils.response_parser import ResponseParser
-    from app.utils.schemas import IntentClassifierResponse, ASTArchitectResponse
+    from app.utils.schemas import IntentClassifierResponse, ASTArchitectResponse, ArchitectAnalysisResponse
 
     code = case["code"]
     instruction = case["instruction"]
@@ -404,15 +404,17 @@ async def run_planner_case(
         f"Code: <code>{code}</code>"
     )
     analysis_res = await run_planner_step(
-        harness, "Analysis", "architect_analysis", analysis_user, 1024
+        harness, "Analysis", "architect_analysis", analysis_user, 1024,
+        response_model=ArchitectAnalysisResponse,
     )
 
     analysis_data = {}
     if analysis_res["success"]:
         try:
-            analysis_data = json.loads(
-                ResponseParser.extract_json_text(analysis_res["content"])
+            parsed = ResponseParser.extract_json(
+                analysis_res["content"], ArchitectAnalysisResponse
             )
+            analysis_data = parsed.model_dump()
         except Exception:
             pass
 
