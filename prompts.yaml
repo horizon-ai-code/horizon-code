@@ -576,11 +576,12 @@ generator:
       - Do NOT merge multiple guard clauses into one check using || or &&.
       - Do NOT change any exception type or error message.
       - Do NOT return the original code unchanged. The output MUST differ from the input.
+      - Do NOT leave any if-inside-if nesting. ALL nesting must be removed.
 
       CONSTRAINTS:
       - Each nested condition becomes a separate guard clause at the method top.
       - Each guard throws or returns immediately for the invalid case.
-      - Valid code runs after all guards pass.
+      - Valid code runs after all guards pass. No if-statements nested inside other ifs.
 
     SPLIT_LOOP: |
       ### SPLIT_LOOP
