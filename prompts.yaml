@@ -19,16 +19,21 @@ planner:
       variables. Use when instruction says "decompose the condition", "break into
       named booleans". Code must have a compound condition with && or ||.
       Not EXTRACT_METHOD (creates booleans, not methods).
+      Not CONSOLIDATE_CONDITIONAL (decompose splits apart, consolidate merges together).
 
     CONSOLIDATE_CONDITIONAL — Merge duplicate conditional branches with identical
       outcomes into one check. Use when instruction says "consolidate", "merge
-      conditions". Code must have multiple if/else branches with same body.
+      conditions", "combine loops", "merge sequential". Code must have multiple
+      if/else branches with same body or multiple passes that can be combined.
+      Not DECOMPOSE_CONDITIONAL (consolidate merges, decompose breaks apart).
 
     REMOVE_CONTROL_FLAG — Eliminate a boolean variable that controls loop flow or
       return logic. Replace the flag with direct break, return, or boolean expression.
       Use when instruction says "remove flag", "eliminate the found variable",
       "replace flag with early return". Not FLATTEN_CONDITIONAL (flatten deals
-      with if-statement structure, not a boolean variable). Code must have a
+      with if-statement structure, not a boolean variable. If the instruction
+      mentions removing a FLAG VARIABLE, it is ALWAYS REMOVE_CONTROL_FLAG,
+      regardless of other words like 'early return'). Code must have a
       boolean declared, set inside a loop or block, and checked afterwards.
 
     REPLACE_LOOP_WITH_PIPELINE — Convert a for/while loop over a collection into
