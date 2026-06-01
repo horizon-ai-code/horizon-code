@@ -44,10 +44,16 @@ class TestOrchestratorFlow(unittest.IsolatedAsyncioTestCase):
             "judge": {"name": "j", "filename": "j"},
         }
         self.mock_prompts = {
-            "planner": {"classifier": "c", "architect": "a", "architect_analysis": "an"},
-            "generator": {"coder": "co"},
-            "judge": {"auditor": "au", "insights": "i"},
-        }
+             "planner": {
+                 "classifier": "c",
+                 "architect": "a",
+                 "architect_analysis": "an",
+                 "analysis_guidance": {"FLATTEN_CONDITIONAL": ""},
+                 "synthesis_guidance": {"FLATTEN_CONDITIONAL": ""},
+             },
+             "generator": {"coder": "co"},
+             "judge": {"auditor": "au", "insights": "i"},
+         }
 
     @patch("builtins.open")
     @patch("yaml.safe_load")
