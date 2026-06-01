@@ -1,6 +1,6 @@
 """
 Full pipeline validation — 20 new test cases from java_polish_full.json.
-Covers all 12 intents. Classifier → Analysis → Architect → Generator.
+Covers all 12 intents. Classifier → Analysis → Architect → Generator → Judge.
 """
 import asyncio
 import json
@@ -17,6 +17,7 @@ from app.utils.schemas import (
     ArchitectAnalysisResponse,
     ASTArchitectResponse,
     IntentClassifierResponse,
+    StructuralAuditorResponse,
 )
 from tests.model_tests.harness import ModelTestHarness
 
@@ -681,6 +682,7 @@ async def main():
         if cm:
             output_code = cm.group(1).strip()
 
+        pr["_output_code"] = output_code
         pr["syntax_valid"] = check_syntax(output_code)
         pr["output_len"] = len(output_code)
         pr["gen_duration"] = gres["duration"]
@@ -697,6 +699,67 @@ async def main():
               f"| syntax={'✓' if pr.get('syntax_valid') else '✗'} methods={'✓' if pr.get('methods_preserved') else '✗'}")
 
     await h_gen.unload_model()
+    print(f"\nGenerator done. Loading judge...")
+
+    # Run Judge for all 20 cases
+    h_judge = ModelTestHarness("judge")
+    await h_judge.load_model()
+
+    for i, (case, pr) in enumerate(zip(TEST_CASES, planner_results)):
+        intent_key = pr.get("actual_intent", case["expected_intent"])
+        if intent_key in ("PARSE_ERROR", "NO_RESPONSE"):
+            intent_key = case["expected_intent"]
+
+        output_code = pr.get("_output_code", "")
+        if not pr.get("syntax_valid") or not output_code:
+            pr["judge_verdict"] = "SKIP"
+            pr["judge_issues"] = ["Syntax invalid — skipped judge"]
+            pr["judge_duration"] = 0
+            continue
+
+        # Build system prompt with FLATTEN guidance if applicable
+        judge_sys = prompts["judge"]["auditor"]
+        if "FLATTEN" in intent_key:
+            flatten_g = prompts["judge"]["auditor_guidance"]["FLATTEN_CONDITIONAL"]
+            judge_sys += "\n" + flatten_g
+
+        plan_actions = pr.get("plan_actions", [])
+        plan_targets = pr.get("plan_targets", [])
+        plan_summary = (
+            f"Intent: {intent_key}."
+            + (f" Mutations: {', '.join(f'{a}({t})' for a, t in zip(plan_actions, plan_targets))}"
+               if plan_actions else " Mutations: none")
+        )
+
+        judge_user = (
+            f"## Plan Context\n{plan_summary}\n\n"
+            f"## Code\n"
+            f"Original: <code>{case['code']}</code>\n"
+            f"Refactored: <code>{output_code}</code>\n"
+            f"Intent: {{\"specific_intent\": \"{intent_key}\"}}"
+        )
+
+        jres = await h_judge.generate(judge_sys, judge_user, temp=0.1, max_tokens=1000,
+                                       response_model=StructuralAuditorResponse)
+        if jres["success"]:
+            try:
+                jp = ResponseParser.extract_json(jres["content"], StructuralAuditorResponse)
+                pr["judge_verdict"] = jp.verdict
+                pr["judge_issues"] = jp.issues
+                pr["judge_duration"] = jres["duration"]
+            except Exception:
+                pr["judge_verdict"] = "PARSE_ERROR"
+                pr["judge_issues"] = []
+                pr["judge_duration"] = jres["duration"]
+        else:
+            pr["judge_verdict"] = "GEN_ERROR"
+            pr["judge_issues"] = []
+            pr["judge_duration"] = jres["duration"]
+
+        print(f"[{i+1:2d}/20] JUDGE: {pr['judge_verdict']:6} | {case['name'][:45]} "
+              f"| issues={len(pr.get('judge_issues', []))} | {pr.get('judge_duration', 0):.1f}s")
+
+    await h_judge.unload_model()
 
     # Summary
     passes = sum(1 for r in planner_results if r["verdict"] == "PASS")
@@ -704,14 +767,21 @@ async def main():
     plans_ok = sum(1 for r in planner_results if r.get("plan_mutations", 0) > 0)
     syntax_ok = sum(1 for r in planner_results if r.get("syntax_valid"))
     methods_ok = sum(1 for r in planner_results if r.get("methods_preserved"))
+    judge_accept = sum(1 for r in planner_results if r.get("judge_verdict") == "ACCEPT")
+    judge_revise = sum(1 for r in planner_results if r.get("judge_verdict") == "REVISE")
+    judge_skip = sum(1 for r in planner_results if r.get("judge_verdict") in ("SKIP", "PARSE_ERROR", "GEN_ERROR"))
+    full_pass = sum(1 for r in planner_results if r.get("classifier_match") and r.get("syntax_valid") and r.get("judge_verdict") == "ACCEPT")
 
     print(f"\n{'='*70}")
     print(f"RESULTS")
-    print(f"  Overall PASS:       {passes}/20")
     print(f"  Classifier correct: {class_ok}/20")
     print(f"  Plans with muts:    {plans_ok}/20")
     print(f"  Syntax valid:       {syntax_ok}/20")
     print(f"  Methods preserved:  {methods_ok}/20")
+    print(f"  Judge ACCEPT:       {judge_accept}/20")
+    print(f"  Judge REVISE:       {judge_revise}/20")
+    print(f"  Judge SKIP:         {judge_skip}/20")
+    print(f"  FULL PIPELINE PASS: {full_pass}/20")
 
     from collections import Counter
     intent_results: Dict[str, List[bool]] = {}
