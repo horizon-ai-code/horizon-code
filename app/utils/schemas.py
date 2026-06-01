@@ -105,7 +105,6 @@ class ASTArchitectResponse(BaseModel):
     architect_scratchpad: str
     ast_modification_plan: ASTModificationPlan
 
-
 class AuditTrace(BaseModel):
     original: str
     refactored: str
@@ -113,8 +112,8 @@ class AuditTrace(BaseModel):
 
 
 class AuditScratchpad(BaseModel):
-    variable_trace: List[AuditTrace]
-    logic_comparison: str
+    variable_trace: List[AuditTrace] = []
+    logic_comparison: str = ""
 
 
 class StructuralAuditorResponse(BaseModel):
@@ -140,3 +139,14 @@ class ValidationFeedback(BaseModel):
     total_faults: int
     is_recoverable: bool
     findings: List[ValidationFinding]
+
+
+class ArchitectAnalysisResponse(BaseModel):
+    analysis_scratchpad: str
+    primary_targets: List[str] = []
+    secondary_targets: List[str] = []
+    new_structures_needed: List[str] = []
+    must_preserve: List[str] = []
+
+
+

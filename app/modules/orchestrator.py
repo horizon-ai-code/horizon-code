@@ -10,11 +10,12 @@ from app.modules.agent_service import AgentService
 from app.modules.connection_manager import ClientConnection
 from app.modules.context_manager import DatabaseManager
 from app.modules.validator import Validator
-from app.utils.formatters import format_agent_output
+from app.utils.formatters import format_agent_output, format_plan_for_generator
 from app.utils.paths import MODELS_CONFIG_PATH, PROMPTS_CONFIG_PATH
 from app.utils.performance import PerformanceTracker
 from app.utils.response_parser import ResponseParser
 from app.utils.schemas import (
+    ArchitectAnalysisResponse,
     ASTArchitectResponse,
     ErrorReport,
     IntentClassifierResponse,
@@ -46,6 +47,9 @@ class OrchestrationState(BaseModel):
 
     # Syntax Healing
     syntax_error_context: Optional[Dict] = None
+
+    # Sub-Step Decomposition
+    architect_analysis: Optional[Dict] = None
 
     # Lifecycle
     current_phase: int = 1
@@ -165,10 +169,10 @@ class Orchestrator:
     async def _run_phase_2(
         self, client: ClientConnection, state: OrchestrationState
     ) -> None:
-        """Phase 2: The Strategy Block (Inference 1 & 2)."""
+        """Phase 2: The Strategy Block (Inference 1, 2, 3)."""
         state.strategy_iter_incremented = False
         # Step 3: Classifier
-        if not state.intent_packet or state.strategy_iter > 1:
+        if not state.intent_packet:
             await self._notify(
                 client,
                 Role.Planner,
@@ -178,8 +182,6 @@ class Orchestrator:
             await self.agent_service.swap(self.model_config["planner"])
 
             prompt = f"<code>{state.base_code}</code>\n<instruction>{state.user_instruction}</instruction>"
-            if state.cumulative_feedback:
-                prompt += f"\n\n### PREVIOUS ATTEMPT FEEDBACK\n{json.dumps(state.cumulative_feedback, indent=2)}"
 
             messages: List[ChatCompletionRequestMessage] = [
                 {"role": "system", "content": self.prompts["planner"]["classifier"]},
@@ -187,7 +189,10 @@ class Orchestrator:
             ]
 
             raw = await self.agent_service.generate(
-                messages, temp=0.1, max_tokens=500, response_model=IntentClassifierResponse
+                messages,
+                temp=0.1,
+                max_tokens=500,
+                response_model=IntentClassifierResponse,
             )
             response_text = raw["choices"][0]["message"].get("content") or ""
             print(
@@ -209,17 +214,84 @@ class Orchestrator:
         # Step 4: Cognitive Reset
         await self.agent_service.clear_context()
 
-        # Step 5: Architect
+        # Step 5a: Architect ANALYSIS (NEW)
         await self._notify(
-            client, Role.Planner, "Ph2: Architecting modification plan...", phase=2
+            client, Role.Planner, "Ph2: Analyzing code structure...", phase=2
         )
 
-        arch_prompt = f"Intent Packet: {json.dumps(state.intent_packet)}\n User Instruction: {state.user_instruction}\n Code: <code>{state.base_code}</code>"
+        analysis_prompt = (
+            f"Intent Packet: {json.dumps(state.intent_packet)}\n"
+            f"User Instruction: {state.user_instruction}\n"
+            f"Code: <code>{state.base_code}</code>"
+        )
+
+        system_content = self.prompts["planner"]["architect_analysis"]
+        if state.intent_packet:
+            intent_key = state.intent_packet.get("specific_intent", "")
+            guidance = self.prompts["planner"]["analysis_guidance"].get(intent_key, "")
+            if guidance:
+                system_content += "\n" + guidance
+
+        messages = [
+            {
+                "role": "system",
+                "content": system_content,
+            },
+            {"role": "user", "content": analysis_prompt},
+        ]
+
+        raw = await self.agent_service.generate(
+            messages,
+            temp=0.1,
+            max_tokens=1024,
+            response_model=ArchitectAnalysisResponse,
+        )
+        analysis_text = raw["choices"][0]["message"].get("content") or ""
+        print(
+            f"\n--- Planner Analysis Output ---\n{analysis_text}\n-------------------------------"
+        )
+
+        try:
+            analysis_model = ResponseParser.extract_json(
+                analysis_text, ArchitectAnalysisResponse
+            )
+            state.architect_analysis = analysis_model.model_dump()
+        except Exception:
+            state.architect_analysis = {}
+
+        await self._notify(
+            client,
+            Role.Planner,
+            "Structure analysis complete.",
+            content=json.dumps(state.architect_analysis),
+        )
+
+        # Step 4b: Cognitive Reset between sub-steps
+        await self.agent_service.clear_context()
+
+        # Step 5c: Architect SYNTHESIS (MODIFIED)
+        await self._notify(
+            client, Role.Planner, "Ph2: Designing mutation plan...", phase=2
+        )
+
+        arch_prompt = (
+            f"Analysis: {json.dumps(state.architect_analysis)}\n"
+            f"Intent: {json.dumps(state.intent_packet)}\n"
+            f"Instruction: {state.user_instruction}\n"
+            f"Code: <code>{state.base_code}</code>"
+        )
         if state.cumulative_feedback:
             arch_prompt += f"\n\n### PREVIOUS ATTEMPT FEEDBACK\n{json.dumps(state.cumulative_feedback, indent=2)}"
 
-        messages: List[ChatCompletionRequestMessage] = [
-            {"role": "system", "content": self.prompts["planner"]["architect"]},
+        system_content = self.prompts["planner"]["architect"]
+        if state.intent_packet:
+            intent_key = state.intent_packet.get("specific_intent", "")
+            guidance = self.prompts["planner"]["synthesis_guidance"].get(intent_key, "")
+            if guidance:
+                system_content += "\n" + guidance
+
+        messages = [
+            {"role": "system", "content": system_content},
             {"role": "user", "content": arch_prompt},
         ]
 
@@ -254,26 +326,34 @@ class Orchestrator:
         if state.syntax_error_context:
             ctx = state.syntax_error_context
             coder_prompt = (
-                f"Modification Plan: {json.dumps(state.active_plan)}\n"
-                f"Base Code: <code>{state.base_code}</code>\n\n"
+                f"Modification Plan: {json.dumps(state.active_plan)}\n\n"
                 f"### PREVIOUS SYNTAX ERROR (Attempt {ctx['attempt']}/3)\n"
                 f"{ctx['error']}\n\n"
                 f"### CURRENT BROKEN CODE\n"
                 f"<code>{ctx['broken_code']}</code>\n\n"
-                f"Fix the syntax error. Output only valid Java wrapped in <code> tags."
+                f"Fix the syntax error above. Output only valid Java wrapped in <code> tags."
             )
         else:
-            coder_prompt = (
-                f"Modification Plan: {json.dumps(state.active_plan)}\n"
-                f"Base Code: <code>{state.base_code}</code>"
+            coder_prompt = format_plan_for_generator(
+                state.active_plan or {}, state.base_code
             )
 
+        system_content = self.prompts["generator"]["coder"]
+        if state.intent_packet:
+            intent_key = state.intent_packet.get("specific_intent", "")
+            guidance = self.prompts["generator"]["coder_guidance"].get(intent_key, "")
+            if guidance:
+                system_content += "\n" + guidance
+
         messages: List[ChatCompletionRequestMessage] = [
-            {"role": "system", "content": self.prompts["generator"]["coder"]},
+            {"role": "system", "content": system_content},
             {"role": "user", "content": coder_prompt},
         ]
 
-        raw = await self.agent_service.generate(messages, temp=0.1, max_tokens=2048)
+        heal_temp = 0.3 if state.syntax_error_context else 0.1
+        raw = await self.agent_service.generate(
+            messages, temp=heal_temp, max_tokens=2048
+        )
         coder_text = raw["choices"][0]["message"].get("content") or ""
         print(
             f"\n--- Generator Coder Output ---\n{coder_text}\n----------------------------"
@@ -287,8 +367,9 @@ class Orchestrator:
             await self._notify(
                 client, Role.Generator, "Code refactored.", content=new_code
             )
-            state.current_phase = 4
             print(new_code)
+
+            state.current_phase = 4
         else:
             # Syntax fail at the gate — no <code> block found
             state.syntax_iter += 1
@@ -355,7 +436,9 @@ class Orchestrator:
                         "error": "Persistent syntax errors after 3 heals.",
                     }
                 )
-                state.strategy_iter += 1
+                if not state.strategy_iter_incremented:
+                    state.strategy_iter += 1
+                    state.strategy_iter_incremented = True
                 state.syntax_iter = 0
                 state.current_phase = 2
                 return
@@ -376,7 +459,9 @@ class Orchestrator:
         if cc_rule == "SKIP":
             pass
         elif cc_rule == "EXTRACT_RULE":
-            target_method = state.intent_packet.get("scope_anchor", {}).get("member", "")
+            target_method = state.intent_packet.get("scope_anchor", {}).get(
+                "member", ""
+            )
             if target_method:
                 orig_method_cc = self.validator.get_method_complexity(
                     state.base_code, target_method
@@ -425,7 +510,7 @@ class Orchestrator:
             member = state.intent_packet["scope_anchor"].get("member", "")
             if member:
                 target_scopes.append(member)
-            target_class = state.intent_packet["scope_anchor"].get("class", "")
+            target_class = state.intent_packet["scope_anchor"].get("target_class", "")
             if target_class:
                 target_scopes.append(target_class)
 
@@ -436,7 +521,7 @@ class Orchestrator:
                 name = target.split("(")[0].strip()
                 if name and name not in target_scopes:
                     target_scopes.append(name)
-        
+
         if state.active_plan and "target_class" in state.active_plan:
             if state.active_plan["target_class"] not in target_scopes:
                 target_scopes.append(state.active_plan["target_class"])
@@ -457,7 +542,11 @@ class Orchestrator:
             if intent_finding:
                 findings.append(intent_finding)
 
-        current_cc_val = current_cc if cc_rule not in ("SKIP", "EXTRACT_RULE") else state.original_complexity
+        current_cc_val = (
+            current_cc
+            if cc_rule not in ("SKIP", "EXTRACT_RULE")
+            else state.original_complexity
+        )
         print(
             f"\\n--- Validator Structural Checks ---\\nComplexity Check: {current_cc_val} (Original: {state.original_complexity})\\nBoundary check found issue: {bool(boundary_finding)}\\nIntent check found issue: {bool(intent_finding)}\\nTotal findings: {len(findings)}\\n-----------------------------------"
         )
@@ -483,6 +572,27 @@ class Orchestrator:
             state.current_phase = 2
         else:
             await self._notify(client, Role.Validator, "Structural Checks Passed.")
+            if (
+                state.active_plan
+                and state.active_plan.get("ast_mutations")
+                and state.working_code.strip() == state.base_code.strip()
+            ):
+                await self._notify(
+                    client,
+                    Role.Validator,
+                    "Plan not executed — code unchanged.",
+                )
+                state.add_feedback(
+                    {
+                        "failure_tier": FailureTier.TIER_3_JUDGE,
+                        "error": "Plan was not executed: code unchanged.",
+                    }
+                )
+                if not state.strategy_iter_incremented:
+                    state.strategy_iter += 1
+                    state.strategy_iter_incremented = True
+                state.current_phase = 2
+                return
             state.current_phase = 5
 
     async def _run_phase_5(
@@ -492,14 +602,53 @@ class Orchestrator:
         await self._notify(client, Role.Judge, "Ph5: Running final audit...", phase=5)
         await self.agent_service.swap(self.model_config["judge"])
 
-        audit_prompt = f"Original: <code>{state.base_code}</code>\nRefactored: <code>{state.working_code}</code>\nIntent: {json.dumps(state.intent_packet)}"
+        # Build plan context summary for the auditor
+        intent = ""
+        target_class = ""
+        target_method = ""
+        if state.intent_packet:
+            intent = state.intent_packet.get("specific_intent", "")
+            scope = state.intent_packet.get("scope_anchor", {})
+            target_class = scope.get("target_class", "")
+            target_method = scope.get("member", "")
+
+        mutations = (
+            state.active_plan.get("ast_mutations", []) if state.active_plan else []
+        )
+        mutation_actions = [m.get("action", "?") for m in mutations]
+        mutation_targets = [m.get("target", "?") for m in mutations]
+
+        plan_summary = f"Intent: {intent}. Target: {target_class}.{target_method}."
+        mutations_list = (
+            f"Mutations: {', '.join(f'{a}({t})' for a, t in zip(mutation_actions, mutation_targets))}"
+            if mutation_actions
+            else "Mutations: none"
+        )
+
+        audit_prompt = (
+            f"## Plan Context\n{plan_summary}\n{mutations_list}\n\n"
+            f"## Code\n"
+            f"Original: <code>{state.base_code}</code>\n"
+            f"Refactored: <code>{state.working_code}</code>\n"
+            f"Intent: {json.dumps(state.intent_packet)}"
+        )
+        system_content = self.prompts["judge"]["auditor"]
+        if state.intent_packet:
+            intent_key = state.intent_packet.get("specific_intent", "")
+            guidance = self.prompts["judge"].get("auditor_guidance", {}).get(intent_key, "")
+            if guidance:
+                system_content += "\n" + guidance
+
         messages: List[ChatCompletionRequestMessage] = [
-            {"role": "system", "content": self.prompts["judge"]["auditor"]},
+            {"role": "system", "content": system_content},
             {"role": "user", "content": audit_prompt},
         ]
 
         raw = await self.agent_service.generate(
-            messages, temp=0.1, max_tokens=1000, response_model=StructuralAuditorResponse
+            messages,
+            temp=0.1,
+            max_tokens=1000,
+            response_model=StructuralAuditorResponse,
         )
         audit_text = raw["choices"][0]["message"].get("content") or ""
         print(

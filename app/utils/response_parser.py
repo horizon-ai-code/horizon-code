@@ -71,6 +71,25 @@ class ResponseParser:
         return model.model_validate_json(cleaned_json)
 
     @staticmethod
+    def extract_json_text(text: Optional[str]) -> str:
+        """Extracts raw JSON string from text, stripping markdown blocks and thinking tags."""
+        if text is None:
+            return "{}"
+        # Strip thinking blocks
+        text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
+        # Look for json code blocks
+        json_block_pattern = r"```json\s*(.*?)\s*```"
+        match = re.search(json_block_pattern, text, re.DOTALL | re.IGNORECASE)
+        if match:
+            return match.group(1).strip()
+        # Try to find the first '{' and last '}'
+        start = text.find("{")
+        end = text.rfind("}")
+        if start != -1 and end != -1:
+            return text[start:end+1].strip()
+        return "{}"
+
+    @staticmethod
     def parse_guaranteed(text: Optional[str], tag: str, model: Optional[Type[T]] = None) -> Any:
         """
         Tries to extract XML first, then JSON if model is provided.
