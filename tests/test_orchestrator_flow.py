@@ -51,7 +51,7 @@ class TestOrchestratorFlow(unittest.IsolatedAsyncioTestCase):
                  "analysis_guidance": {"FLATTEN_CONDITIONAL": ""},
                  "synthesis_guidance": {"FLATTEN_CONDITIONAL": ""},
              },
-             "generator": {"coder": "co"},
+             "generator": {"coder": "co", "coder_guidance": {"FLATTEN_CONDITIONAL": ""}},
              "judge": {"auditor": "au", "insights": "i"},
          }
 

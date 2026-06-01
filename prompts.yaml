@@ -499,19 +499,12 @@ planner:
 generator:
   coder: |
     ### ROLE
-    Silent execution engine. Apply the ast_modification_plan to the base code exactly as specified.
+    Silent execution engine. Apply the instructions to the base code exactly as specified.
 
     ### RULES
-    1. Apply mutations in the order listed in the plan
-    2. DATA INTEGRITY: Preserve string literals, exception types, and error messages from the original code unless the plan explicitly changes them
-    3. CONSTANT USAGE: If the plan defines constants or enums, use their names — do not keep the original numeric literal values
-    4. LOGIC PRESERVATION: For FLATTEN_CONDITIONAL, each original if-condition must map to an equivalent inverted guard clause. Do NOT change which branch executes for a given input. Trace through at least one concrete example before outputting.
-
-    ### ANTI-PATTERNS (MOST IMPORTANT — NEVER VIOLATE)
-    1. NEVER merge multiple guard clauses or validation checks into one combined condition with || or &&. Each original throw statement must become its own separate if-check at the top level, even if the result is longer.
-    2. NEVER change exception types (IllegalArgumentException stays as is, etc.)
-    3. NEVER add any method, field, or variable not listed in the plan's ast_mutations
-    4. NEVER use markdown or code fences (```). Output ONLY <code> tags around the code.
+    1. Apply instructions in the listed order.
+    2. Preserve all string literals, exception types, and error messages from the original code unless the instructions explicitly change them.
+    3. If the instructions define constants, use the constant name — do not keep the original literal value.
 
     ### OUTPUT FORMAT
     Output ONLY the refactored code wrapped in <code> tags. No explanation, no markdown, no preamble.
@@ -519,6 +512,157 @@ generator:
     <code>
     public class X { ... }
     </code>
+
+  coder_guidance:
+    EXTRACT_CONSTANT: |
+      ### EXTRACT_CONSTANT
+      Replace a magic number with a static final constant.
+
+      ANTI-PATTERNS:
+      - Do NOT change any method signature, return type, or parameter list.
+      - Do NOT remove any methods. Every method from the base code must still exist.
+      - Do NOT add validation checks or new exceptions.
+
+      CONSTRAINTS:
+      - Every occurrence of the literal must use the constant name.
+      - The ADD_CONSTANT instruction declares the constant. MODIFY_METHOD instructions replace the literal.
+
+    RENAME_SYMBOL: |
+      ### RENAME_SYMBOL
+      Rename a symbol everywhere it appears.
+
+      ANTI-PATTERNS:
+      - The old name must NOT appear anywhere in the output.
+      - Do NOT change method behavior or logic. Only update identifier names.
+      - Do NOT add or remove methods, fields, or variables.
+
+      CONSTRAINTS:
+      - Update getter/setter names to match the renamed field (e.g., getN → getUsername).
+      - Every reference to the old name must use the new name.
+
+    EXTRACT_METHOD: |
+      ### EXTRACT_METHOD
+      Move a code block into a new private helper method.
+
+      ANTI-PATTERNS:
+      - Do NOT copy all parameters from the original method. Use ONLY the parameters listed in the instructions.
+      - Do NOT change the original method's signature or return type.
+      - Do NOT add validation or new exceptions.
+
+      CONSTRAINTS:
+      - The new helper must exist and must be called from the original method.
+      - The original method's body must be updated to call the helper instead of containing the extracted code.
+
+    DECOMPOSE_CONDITIONAL: |
+      ### DECOMPOSE_CONDITIONAL
+      Break a compound condition into named boolean variables.
+
+      ANTI-PATTERNS:
+      - Do NOT create any extra methods (no initialize(), no setup(), no helper methods).
+      - Do NOT invert logic with negation (!). Keep each boolean as a positive check.
+      - Do NOT change the method signature in any way.
+      - Do NOT change the method's return behavior.
+
+      CONSTRAINTS:
+      - Each boolean field from the instructions must be declared.
+      - Inside the target method: declare variables, assign conditions, use them in the if-statement.
+      - The method must accept the same parameters and return the same type.
+
+    FLATTEN_CONDITIONAL: |
+      ### FLATTEN_CONDITIONAL
+      Convert nested if-statements into flat guard clauses.
+
+      ANTI-PATTERNS:
+      - Do NOT merge multiple guard clauses into one check using || or &&.
+      - Do NOT change any exception type or error message.
+      - Do NOT return the original code unchanged. The output MUST differ from the input.
+
+      CONSTRAINTS:
+      - Each nested condition becomes a separate guard clause at the method top.
+      - Each guard throws or returns immediately for the invalid case.
+      - Valid code runs after all guards pass.
+
+    SPLIT_LOOP: |
+      ### SPLIT_LOOP
+      Separate one loop into multiple loops.
+
+      ANTI-PATTERNS:
+      - Do NOT create new methods. Keep everything in the same method.
+      - Do NOT change the overall behavior or output.
+
+      CONSTRAINTS:
+      - Each loop handles one distinct operation.
+      - The same inputs must produce the same outputs as the original.
+
+    CONSOLIDATE_CONDITIONAL: |
+      ### CONSOLIDATE_CONDITIONAL
+      Merge duplicate conditional branches.
+
+      ANTI-PATTERNS:
+      - Do NOT change return values or outcomes. Preserve exact behavior.
+
+      CONSTRAINTS:
+      - Branches with identical bodies must be combined into one check.
+      - Use || or a lookup structure to merge conditions.
+
+    REMOVE_CONTROL_FLAG: |
+      ### REMOVE_CONTROL_FLAG
+      Eliminate a boolean flag variable.
+
+      ANTI-PATTERNS:
+      - Do NOT keep the flag variable anywhere in the output.
+      - Do NOT change the method's return behavior.
+
+      CONSTRAINTS:
+      - Replace flag assignments with direct break/return.
+      - Replace flag checks with the original condition that set the flag.
+
+    REPLACE_LOOP_WITH_PIPELINE: |
+      ### REPLACE_LOOP_WITH_PIPELINE
+      Convert a loop into stream operations.
+
+      ANTI-PATTERNS:
+      - Do NOT keep the original loop.
+      - Do NOT change element order or the collection type.
+
+      CONSTRAINTS:
+      - Use .stream() with map, filter, collect, or forEach as appropriate.
+
+    INLINE_METHOD: |
+      ### INLINE_METHOD
+      Remove a method and inline its body at every call site.
+
+      ANTI-PATTERNS:
+      - The target method must NOT exist in the output.
+      - Do NOT change the callers' behavior.
+
+      CONSTRAINTS:
+      - Replace every call with the method body.
+      - Rename variables to avoid conflicts with the caller's scope.
+
+    EXTRACT_VARIABLE: |
+      ### EXTRACT_VARIABLE
+      Assign a repeated expression to a named local variable.
+
+      ANTI-PATTERNS:
+      - Do NOT change the expression's value or result type.
+      - Do NOT add new logic or validation.
+
+      CONSTRAINTS:
+      - Declare the variable before its first use.
+      - Replace ALL occurrences of the expression with the variable name.
+
+    INLINE_VARIABLE: |
+      ### INLINE_VARIABLE
+      Remove a local variable and use its value directly.
+
+      ANTI-PATTERNS:
+      - The variable declaration must NOT exist in the output.
+      - Do NOT change behavior — the expression must evaluate the same way.
+
+      CONSTRAINTS:
+      - Replace every use of the variable with its assigned expression.
+      - Remove the variable declaration entirely.
 
 
 judge:

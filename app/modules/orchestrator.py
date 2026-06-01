@@ -10,7 +10,7 @@ from app.modules.agent_service import AgentService
 from app.modules.connection_manager import ClientConnection
 from app.modules.context_manager import DatabaseManager
 from app.modules.validator import Validator
-from app.utils.formatters import format_agent_output
+from app.utils.formatters import format_agent_output, format_plan_for_generator
 from app.utils.paths import MODELS_CONFIG_PATH, PROMPTS_CONFIG_PATH
 from app.utils.performance import PerformanceTracker
 from app.utils.response_parser import ResponseParser
@@ -334,13 +334,19 @@ class Orchestrator:
                 f"Fix the syntax error above. Output only valid Java wrapped in <code> tags."
             )
         else:
-            coder_prompt = (
-                f"Modification Plan: {json.dumps(state.active_plan)}\n"
-                f"Base Code: <code>{state.base_code}</code>"
+            coder_prompt = format_plan_for_generator(
+                state.active_plan or {}, state.base_code
             )
 
+        system_content = self.prompts["generator"]["coder"]
+        if state.intent_packet:
+            intent_key = state.intent_packet.get("specific_intent", "")
+            guidance = self.prompts["generator"]["coder_guidance"].get(intent_key, "")
+            if guidance:
+                system_content += "\n" + guidance
+
         messages: List[ChatCompletionRequestMessage] = [
-            {"role": "system", "content": self.prompts["generator"]["coder"]},
+            {"role": "system", "content": system_content},
             {"role": "user", "content": coder_prompt},
         ]
 
