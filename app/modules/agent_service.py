@@ -1,6 +1,6 @@
 import asyncio
 import gc
-from typing import List, Literal, Optional, overload
+from typing import List, Literal, Optional, Type, TypeVar, cast, overload
 
 from llama_cpp import Iterator, Llama
 from llama_cpp.llama_types import (
@@ -8,8 +8,11 @@ from llama_cpp.llama_types import (
     CreateChatCompletionResponse,
     CreateChatCompletionStreamResponse,
 )
+from pydantic import BaseModel
 
 from app.utils.paths import MODELS_DIR
+
+T = TypeVar("T", bound=BaseModel)
 
 
 class AgentService:
@@ -92,6 +95,28 @@ class AgentService:
         await self.unload()
         await self.load(config)
 
+    @staticmethod
+    def _count_tokens(
+        chunks: List[CreateChatCompletionStreamResponse], content: str
+    ) -> int:
+        for chunk in reversed(chunks):
+            usage = chunk.get("usage")
+            if usage:
+                tokens = usage.get("completion_tokens")
+                if tokens:
+                    return tokens
+        return len(content.split())
+
+    async def clear_context(self) -> None:
+        """
+        Purges KV cache (context memory) without unloading model weights.
+        """
+        async with self._model_lock:
+            if self.model is not None:
+                # Purge the sequence memory in llama-cpp
+                await asyncio.to_thread(self.model.reset)
+                print("KV Cache purged. Sequence memory cleared.")
+
     @overload
     async def generate(
         self,
@@ -99,6 +124,7 @@ class AgentService:
         temp: float,
         max_tokens: int,
         stream: Literal[False] = False,
+        response_model: Optional[Type[T]] = None,
     ) -> CreateChatCompletionResponse: ...
 
     @overload
@@ -108,6 +134,7 @@ class AgentService:
         temp: float,
         max_tokens: int,
         stream: Literal[True],
+        response_model: Optional[Type[T]] = None,
     ) -> Iterator[CreateChatCompletionStreamResponse]: ...
 
     async def generate(
@@ -116,10 +143,12 @@ class AgentService:
         temp: float,
         max_tokens: int,
         stream: bool = False,
+        response_model: Optional[Type[T]] = None,
     ) -> CreateChatCompletionResponse | Iterator[CreateChatCompletionStreamResponse]:
         """
         Generates completions with repetition penalty to prevent infinite loops.
         Uses internal streaming to allow safe interruption between tokens.
+        If response_model is provided, enforces GBNF grammar for strict JSON output.
         """
         async with self._model_lock:
             model = self.model
@@ -129,16 +158,32 @@ class AgentService:
             self._stop_event.clear()
 
             # Always use streaming internally to allow for mid-generation halting
-            def create_generator():
-                return model.create_chat_completion(
-                    messages=messages,
-                    temperature=temp,
-                    repeat_penalty=1.15,
-                    stream=True,
-                    max_tokens=max_tokens,
-                )
+            def create_generator() -> Iterator[CreateChatCompletionStreamResponse]:
+                if response_model:
+                    result = model.create_chat_completion(
+                        messages=messages,
+                        temperature=temp,
+                        repeat_penalty=1.2,
+                        stream=True,
+                        max_tokens=max_tokens,
+                        response_format={
+                            "type": "json_object",
+                            "schema": response_model.model_json_schema(),
+                        },
+                    )
+                else:
+                    result = model.create_chat_completion(
+                        messages=messages,
+                        temperature=temp,
+                        repeat_penalty=1.2,
+                        stream=True,
+                        max_tokens=max_tokens,
+                    )
+                return cast(Iterator[CreateChatCompletionStreamResponse], result)
 
-            iterator = await asyncio.to_thread(create_generator)
+            iterator: Iterator[
+                CreateChatCompletionStreamResponse
+            ] = await asyncio.to_thread(create_generator)
 
             if stream:
                 return iterator
@@ -146,6 +191,7 @@ class AgentService:
             chunks: List[CreateChatCompletionStreamResponse] = []
             try:
                 while not self._stop_event.is_set():
+
                     def get_next():
                         try:
                             return next(iterator)
@@ -165,7 +211,7 @@ class AgentService:
 
             # Reconstruct full response from chunks
             content = "".join(
-                chunk["choices"][0].get("delta", {}).get("content", "")
+                chunk["choices"][0].get("delta", {}).get("content") or ""
                 for chunk in chunks
             )
 
@@ -178,17 +224,14 @@ class AgentService:
                 "choices": [
                     {
                         "index": 0,
-                        "message": {
-                            "role": "assistant",
-                            "content": content
-                        },
+                        "message": {"role": "assistant", "content": content},
                         "logprobs": None,
-                        "finish_reason": "stop"
+                        "finish_reason": "stop",
                     }
                 ],
                 "usage": {
                     "prompt_tokens": 0,
-                    "completion_tokens": len(chunks),
-                    "total_tokens": len(chunks)
-                }
+                    "completion_tokens": self._count_tokens(chunks, content),
+                    "total_tokens": self._count_tokens(chunks, content),
+                },
             }  # type: ignore

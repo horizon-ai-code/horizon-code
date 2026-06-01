@@ -101,6 +101,7 @@ async def entrypoint(websocket: WebSocket) -> None:
             if data.get("type") == "halt":
                 if current_task and not current_task.done():
                     agent_service.stop()
+                    current_task.cancel()
                     print(f"Halt triggered for session {client_conn.id}")
                 continue
 

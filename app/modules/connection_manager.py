@@ -1,5 +1,5 @@
 import uuid
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import WebSocket
 
@@ -33,37 +33,43 @@ class ClientConnection:
 
     async def send_halt_notification(self) -> None:
         """Notifies the frontend that the orchestration has been halted."""
-        message: dict = {"type": "status", "role": Role.System, "content": "Orchestration halted by user."}
+        message: dict = {
+            "type": "status",
+            "role": Role.System,
+            "content": "Orchestration halted by user.",
+        }
         await self.websocket.send_json(message)
 
     async def send_result(
         self,
         final_code: str,
-        insights: str,
         original_complexity: Optional[int],
         refactored_complexity: Optional[int],
         performance_metrics: dict,
+        planner_model: Optional[str] = None,
+        generator_model: Optional[str] = None,
+        judge_model: Optional[str] = None,
     ):
-        # 1. Update the existing session record with final results
-        self.db.complete_session(
-            id=self.id,
-            refactored_code=final_code,
-            insights=insights,
-            original_complexity=original_complexity,
-            refactored_complexity=refactored_complexity,
-            performance_metrics=performance_metrics,
-        )
-
-
-        # 2. Send the final result payload to the frontend
+        """Sends the final result payload to the frontend."""
         message: dict = {
             "type": "result",
             "id": self.id,
             "code": final_code,
             "original_complexity": original_complexity,
             "refactored_complexity": refactored_complexity,
-            "insights": insights,
             "performance": performance_metrics,
+            "planner_model": planner_model,
+            "generator_model": generator_model,
+            "judge_model": judge_model,
+        }
+        await self.websocket.send_json(message)
+
+    async def send_insights(self, insights: Any):
+        """Sends the structured insights follow-up message."""
+        message: dict = {
+            "type": "insights",
+            "id": self.id,
+            "insights": insights
         }
         await self.websocket.send_json(message)
 

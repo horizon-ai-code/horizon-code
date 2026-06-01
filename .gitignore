@@ -9,3 +9,7 @@ db/
 .idea
 
 GEMINI.md
+
+.agents
+
+test_results/

@@ -16,6 +16,7 @@ The backend exposes:
     - [Connection](#connection)
     - [Client → Server Messages](#client--server-messages)
         - [RefactorRequest](#refactorrequest)
+        - [HaltRequest](#haltrequest)
     - [Server → Client Messages](#server--client-messages)
         - [Status Update](#status-update)
         - [Result](#result)
@@ -55,7 +56,7 @@ The following origins are allowed:
 
 ### `RefactorRequest`
 
-Every message the client sends **must** be a JSON object with this exact shape:
+Every message the client sends to trigger a refactor **must** be a JSON object with this exact shape:
 
 ```jsonc
 {
@@ -79,6 +80,20 @@ Every message the client sends **must** be a JSON object with this exact shape:
     "user_instruction": "Rename the class to Baz and extract the print into a separate method."
 }
 ```
+
+### `HaltRequest`
+
+Sent by the client to halt the currently running orchestration on this connection.
+
+```jsonc
+{
+    "type": "halt"
+}
+```
+
+| Field  | Type     | Required | Description                                    |
+| ------ | -------- | -------- | ---------------------------------------------- |
+| `type` | `string` | ✅       | Must be exactly `"halt"`.                      |
 
 ---
 
@@ -112,7 +127,7 @@ Sent **once** right after the server validates a new `RefactorRequest` and befor
 
 ### Status Update
 
-Sent **multiple times** during orchestration to report progress from each agent.
+Sent **multiple times** during orchestration to report progress from each agent, or system messages like halt confirmations.
 
 ```jsonc
 {
@@ -125,7 +140,7 @@ Sent **multiple times** during orchestration to report progress from each agent.
 | Field     | Type     | Description                                                                               |
 | --------- | -------- | ----------------------------------------------------------------------------------------- |
 | `type`    | `string` | Always `"status"`.                                                                        |
-| `role`    | `Role`   | The agent currently active. One of: `"Planner"`, `"Generator"`, `"Judge"`, `"Validator"`. |
+| `role`    | `Role`   | The agent currently active. One of: `"Planner"`, `"Generator"`, `"Judge"`, `"Validator"`, `"System"`. |
 | `content` | `string` | A short, human-readable progress description.                                             |
 
 #### Status messages you can expect (in typical order)
@@ -145,6 +160,7 @@ Sent **multiple times** during orchestration to report progress from each agent.
 | 9   | `Validator` | `"Checking complexity..."`                               |
 | 10  | `Validator` | `"Complexity measured."`                                 |
 | 11  | `Judge`     | `"Generating insights..."`                               |
+| 12  | `System`    | `"Orchestration halted by user."` _(if halted)_          |
 
 > After step 11, the next message will be a [`result`](#result).
 
@@ -159,18 +175,28 @@ Sent **once** at the end of a successful orchestration cycle.
   "type": "result",
   "id": "<string>",          // The unique session ID for this result
   "code": "<string>",          // The final refactored Java code
-  "complexity": <int | null>,  // Cyclomatic complexity score, or null if empty
-  "insights": "<string>"       // AI-generated analysis of the refactoring
+  "original_complexity": <int | null>,    // Cyclomatic complexity score of the original code
+  "refactored_complexity": <int | null>,  // Cyclomatic complexity score of the refactored code
+  "insights": "<string>",       // AI-generated analysis of the refactoring
+  "performance": { ... },       // Dictionary of performance metrics
+  "planner_model": "<string | null>",   // The model used by Planner
+  "generator_model": "<string | null>", // The model used by Generator
+  "judge_model": "<string | null>"      // The model used by Judge
 }
 ```
 
-| Field        | Type          | Description                                                                          |
-| ------------ | ------------- | ------------------------------------------------------------------------------------ |
-| `type`       | `string`      | Always `"result"`.                                                                   |
-| `id`         | `string`      | The unique session identifier (UUID v4 string).                                     |
-| `code`       | `string`      | The final, syntax-validated, refactored Java code.                                   |
-| `complexity` | `int \| null` | Cyclomatic complexity score of the refactored code. `null` if the snippet was empty. |
-| `insights`   | `string`      | A detailed AI-generated analysis comparing the original and refactored code.         |
+| Field                   | Type          | Description                                                                          |
+| ----------------------- | ------------- | ------------------------------------------------------------------------------------ |
+| `type`                  | `string`      | Always `"result"`.                                                                   |
+| `id`                    | `string`      | The unique session identifier (UUID v4 string).                                     |
+| `code`                  | `string`      | The final, syntax-validated, refactored Java code.                                   |
+| `original_complexity`   | `int \| null` | Cyclomatic complexity score of the original code.                                    |
+| `refactored_complexity` | `int \| null` | Cyclomatic complexity score of the refactored code.                                  |
+| `insights`              | `string`      | A detailed AI-generated analysis comparing the original and refactored code.         |
+| `performance`           | `dict`        | Dictionary of performance metrics.                                                   |
+| `planner_model`         | `string \| null`| The LLM used by the Planner agent.                                                 |
+| `generator_model`       | `string \| null`| The LLM used by the Generator agent.                                               |
+| `judge_model`           | `string \| null`| The LLM used by the Judge agent.                                                   |
 
 #### Example
 
@@ -179,8 +205,13 @@ Sent **once** at the end of a successful orchestration cycle.
     "type": "result",
     "id": "550e8400-e29b-41d4-a716-446655440000",
     "code": "public class Baz {\n  public void bar() {\n    printHello();\n  }\n  private void printHello() {\n    System.out.println(\"Hello\");\n  }\n}",
-    "complexity": 1,
-    "insights": "The refactoring successfully extracted the print logic into a dedicated method..."
+    "original_complexity": 2,
+    "refactored_complexity": 1,
+    "insights": "The refactoring successfully extracted the print logic into a dedicated method...",
+    "performance": { "inference_time_ms": 1500, "tokens_per_sec": 45 },
+    "planner_model": "DeepSeek-R1-Distill-Qwen-1.5B",
+    "generator_model": "Qwen2.5-Coder-3B-Instruct",
+    "judge_model": "Llama-3.2-3B-Instruct"
 }
 ```
 
@@ -340,7 +371,15 @@ Retrieves the full details of a specific refactoring session by its unique ID, i
   "original_code": "<string>",      // The original Java code
   "refactored_code": "<string>",    // The refactored Java code (null if in-progress)
   "insights": "<string>",          // The generated insights (null if in-progress)
-  "complexity": <integer | null>,  // Cyclomatic complexity score
+  "original_complexity": <integer | null>, // Cyclomatic complexity score of the original code
+  "refactored_complexity": <integer | null>, // Cyclomatic complexity score of the refactored code
+  "planner_model": "<string | null>",
+  "generator_model": "<string | null>",
+  "judge_model": "<string | null>",
+  "avg_gpu_utilization": <float | null>,
+  "avg_gpu_memory": <float | null>,
+  "avg_gpu_memory_used": <float | null>,
+  "inference_time": <float | null>,
   "created_at": "<timestamp>",     // When the session started (ISO 8601)
   "logs": [                        // Array of orchestration steps
     {
@@ -373,7 +412,15 @@ curl http://localhost:8000/api/history/550e8400-e29b-41d4-a716-446655440000
     "original_code": "public class Foo {}",
     "refactored_code": "public class Baz {}",
     "insights": "Renamed class successfuly.",
-    "complexity": 1,
+    "original_complexity": 2,
+    "refactored_complexity": 1,
+    "planner_model": "DeepSeek-R1-Distill-Qwen-1.5B",
+    "generator_model": "Qwen2.5-Coder-3B-Instruct",
+    "judge_model": "Llama-3.2-3B-Instruct",
+    "avg_gpu_utilization": 85.5,
+    "avg_gpu_memory": 8192.0,
+    "avg_gpu_memory_used": 4096.0,
+    "inference_time": 4.5,
     "created_at": "2026-04-03T22:30:45Z",
     "logs": [
         {
@@ -431,6 +478,7 @@ Identifies which agent is active. Used in `status` messages.
 | `"Generator"` | Writes the refactored code from instructions.          |
 | `"Judge"`     | Interprets errors or generates post-refactor insights. |
 | `"Validator"` | Validates syntax and measures complexity.              |
+| `"System"`    | System-level notifications (e.g. halt confirmations).  |
 
 ### `Message Types`
 
@@ -458,6 +506,12 @@ interface RefactorRequest {
     code: string;
     user_instruction: string;
 }
+
+interface HaltRequest {
+    type: "halt";
+}
+
+type ClientMessage = RefactorRequest | HaltRequest;
 ```
 
 ### Connection ID (Server → Client)
@@ -486,8 +540,13 @@ interface ResultMessage {
     type: "result";
     id: string;
     code: string;
-    complexity: number | null;
+    original_complexity: number | null;
+    refactored_complexity: number | null;
     insights: string;
+    performance: Record<string, any>;
+    planner_model: string | null;
+    generator_model: string | null;
+    judge_model: string | null;
 }
 ```
 
@@ -500,7 +559,15 @@ interface RefactorHistoryDetail {
     original_code: string;
     refactored_code: string | null;
     insights: string | null;
-    complexity: number | null;
+    original_complexity: number | null;
+    refactored_complexity: number | null;
+    planner_model: string | null;
+    generator_model: string | null;
+    judge_model: string | null;
+    avg_gpu_utilization: number | null;
+    avg_gpu_memory: number | null;
+    avg_gpu_memory_used: number | null;
+    inference_time: number | null;
     created_at: string; // ISO 8601
     logs: OrchestrationLog[]; // Bundled logs
 }
@@ -579,13 +646,20 @@ ws.onmessage = (event) => {
         case "result":
             console.log("Session ID:", msg.id);
             console.log("Refactored code:", msg.code);
-            console.log("Complexity score:", msg.complexity);
+            console.log("Original Complexity score:", msg.original_complexity);
+            console.log("Refactored Complexity score:", msg.refactored_complexity);
             console.log("Insights:", msg.insights);
+            console.log("Models:", msg.planner_model, msg.generator_model, msg.judge_model);
+            console.log("Performance:", msg.performance);
             break;
         case "error":
             console.error("Error:", msg.message, msg.details);
             break;
     }
 };
-```
 
+// Halting an orchestration
+function haltOrchestration() {
+    ws.send(JSON.stringify({ type: "halt" }));
+}
+```
