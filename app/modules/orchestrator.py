@@ -47,6 +47,7 @@ class OrchestrationState(BaseModel):
 
     # Syntax Healing
     syntax_error_context: Optional[Dict] = None
+    structural_fix_attempts: int = 0
 
     # Sub-Step Decomposition
     architect_analysis: Optional[Dict] = None
@@ -625,10 +626,32 @@ class Orchestrator:
                 content=json.dumps([f.model_dump() for f in findings]),
             )
             state.extend_feedback([f.model_dump() for f in findings])
+
+            # Try structural fix — send errors to Generator for targeted fix
+            if state.structural_fix_attempts < 1:
+                state.structural_fix_attempts += 1
+                # Build error context for Generator from findings
+                error_msgs = []
+                for f in findings:
+                    error_msgs.append(f.error_report.message[:200])
+                state.syntax_error_context = {
+                    "attempt": state.structural_fix_attempts,
+                    "error": "Structural issues: " + "; ".join(error_msgs[:2]),
+                    "broken_code": state.working_code,
+                }
+                await self._notify(
+                    client,
+                    Role.Validator,
+                    f"Routing to Generator for targeted fix...",
+                )
+                state.current_phase = 3
+                return
+
             if not state.strategy_iter_incremented:
                 state.strategy_iter += 1
                 state.strategy_iter_incremented = True
             state.syntax_iter = 0
+            state.structural_fix_attempts = 0
             state.current_phase = 2
         else:
             await self._notify(client, Role.Validator, "Structural Checks Passed.")
