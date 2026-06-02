@@ -732,7 +732,6 @@ generator:
       ANTI-PATTERNS: Variable declaration must NOT exist.
       CONSTRAINTS: Replace every use with expression. Remove declaration.
 
-
 judge:
   auditor: |
     ### ROLE
