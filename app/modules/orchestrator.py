@@ -351,8 +351,10 @@ class Orchestrator:
         ]
 
         heal_temp = 0.3 if state.syntax_error_context else 0.1
+        retry_temp = 0.3 if state.strategy_iter > 1 else heal_temp
+        gen_max_tokens = 3072
         raw = await self.agent_service.generate(
-            messages, temp=heal_temp, max_tokens=2048
+            messages, temp=retry_temp, max_tokens=gen_max_tokens
         )
         coder_text = raw["choices"][0]["message"].get("content") or ""
         print(
@@ -647,7 +649,7 @@ class Orchestrator:
         raw = await self.agent_service.generate(
             messages,
             temp=0.1,
-            max_tokens=1000,
+            max_tokens=1500,
             response_model=StructuralAuditorResponse,
         )
         audit_text = raw["choices"][0]["message"].get("content") or ""
