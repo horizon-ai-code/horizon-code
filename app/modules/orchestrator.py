@@ -65,8 +65,6 @@ class OrchestrationState(BaseModel):
 
     # Baseline Metrics
     original_complexity: int = 0
-    previous_fault_count: int = 999
-    fault_stall_count: int = 0
 
     def add_feedback(self, entry: Dict) -> None:
         self.cumulative_feedback.append(entry)
@@ -305,16 +303,6 @@ class Orchestrator:
 
                 # Global circuit breaker
                 if state.strategy_iter > 3:
-                    state.exit_status = ExitStatus.ABORT_STRATEGY
-                    state.current_phase = 6
-                    break
-
-                if state.fault_stall_count >= 2:
-                    await self._notify(
-                        client,
-                        Role.System,
-                        "Circuit Breaker: Faults not decreasing. Aborting.",
-                    )
                     state.exit_status = ExitStatus.ABORT_STRATEGY
                     state.current_phase = 6
                     break
@@ -960,12 +948,6 @@ class Orchestrator:
         )
         if findings:
             current_fault_count = len(findings)
-            if current_fault_count >= state.previous_fault_count:
-                state.fault_stall_count += 1
-            else:
-                state.fault_stall_count = 0
-            state.previous_fault_count = current_fault_count
-
             await self._notify(
                 client,
                 Role.Validator,

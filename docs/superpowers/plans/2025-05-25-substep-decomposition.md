@@ -416,8 +416,6 @@ class OrchestrationState(BaseModel):
 
     # Baseline Metrics
     original_complexity: int = 0
-    previous_fault_count: int = 999
-    fault_stall_count: int = 0
 ```
 
 - [ ] **Step 2: Verify no import errors**
