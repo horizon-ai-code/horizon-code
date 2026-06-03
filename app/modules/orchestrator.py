@@ -91,6 +91,135 @@ class Orchestrator:
         except yaml.YAMLError as e:
             print(f"Error loading config: {e}")
 
+    def _chunkify(self, code: str) -> List[Dict[str, Any]]:
+        """Split Java code into labeled chunks at structural boundaries."""
+        lines = code.strip().split('\n')
+        chunks = []
+        current = []
+        brace_depth = 0
+        chunk_id = 0
+
+        for line in lines:
+            stripped = line.strip()
+            current.append(line)
+            brace_depth += stripped.count('{') - stripped.count('}')
+
+            # Split at method/field boundaries — when brace depth goes to 0 after being >0
+            # Or at class-level declarations
+            if brace_depth == 0 and current:
+                # Check if this is a complete declaration
+                text = '\n'.join(current).strip()
+                if text:
+                    chunk_id += 1
+                    chunks.append({"id": str(chunk_id), "text": text, "action": "KEEP"})
+                current = []
+
+        # Remaining lines
+        if current:
+            text = '\n'.join(current).strip()
+            if text:
+                chunk_id += 1
+                chunks.append({"id": str(chunk_id), "text": text, "action": "KEEP"})
+
+        return chunks
+
+    def _map_plan_to_chunks(self, plan: dict, chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """For each mutation, mark target chunk for MODIFY, ADD, or DELETE."""
+        mutations = plan.get("ast_mutations", [])
+        if not mutations:
+            return chunks
+
+        add_counter = 0
+        for mutation in mutations:
+            action = mutation.get("action", "")
+            target = mutation.get("target", "")
+            details = mutation.get("details", {})
+
+            if action in ("ADD_METHOD", "ADD_FIELD", "ADD_CONSTANT", "ADD_ENUM"):
+                add_counter += 1
+                typ = details.get("type", "") or ""
+                mods = " ".join(details.get("modifiers", []))
+                body = details.get("body_abstract", "") or ""
+                signature = f"{mods} {typ} {target}".strip()
+                if action == "ADD_CONSTANT":
+                    signature = f"{mods} {typ} {target}".strip() if typ else f"static final {target}"
+                elif action == "ADD_FIELD":
+                    signature = f"{mods} {typ} {target}".strip() if typ else f"private {target}"
+                elif action == "ADD_METHOD":
+                    signature = f"{mods} {typ} {target}".strip() if typ else target
+
+                chunks.insert(0, {
+                    "id": f"add-{add_counter}",
+                    "text": "",
+                    "action": action,
+                    "instruction": f"{action} — {body}" if body else f"{action}: declare {signature}",
+                })
+
+            elif action in ("MODIFY_METHOD", "RENAME_SYMBOL"):
+                for chunk in chunks:
+                    if target in chunk["text"] and chunk.get("action") == "KEEP":
+                        chunk["action"] = action
+                        chunk["instruction"] = (
+                            f"{action} — {details.get('body_abstract', '') or f'Apply {action} to {target}'}"
+                        )
+                        break
+
+        return chunks
+
+    def _build_chunked_prompt(self, chunks: List[Dict[str, Any]], base_code: str) -> str:
+        """Build XML-chunked prompt for Generator."""
+        prompt = "<file>\n"
+        for c in chunks:
+            text = c.get("text", "")
+            if text:
+                prompt += f'<chunk id="{c["id"]}">{text}</chunk>\n'
+            else:
+                prompt += f'<chunk id="{c["id"]}" empty="true">{c.get("instruction", "")}</chunk>\n'
+        prompt += "</file>\n\nInstructions:\n"
+
+        active_mutations = 0
+        for c in chunks:
+            action = c.get("action", "KEEP")
+            if action != "KEEP":
+                active_mutations += 1
+                prompt += f'  {c["id"]}: {action} — {c.get("instruction", "apply change")}\n'
+            else:
+                prompt += f'  {c["id"]}: KEEP\n'
+
+        prompt += f"\nOutput ONLY the {active_mutations} chunk(s) that CHANGE. Skip KEEP chunks.\n"
+        prompt += "Use exactly the same chunk IDs as above.\n<file>"
+        return prompt
+
+    def _parse_chunked_output(self, raw: str) -> Dict[str, str]:
+        """Extract changed chunks from model output."""
+        import re as _re
+        modified = {}
+        for match in _re.finditer(r'<chunk id="([^"]+)"[^>]*>(.*?)</chunk>', raw, _re.DOTALL):
+            chunk_id = match.group(1)
+            new_text = match.group(2).strip()
+            if new_text:
+                modified[chunk_id] = new_text
+        return modified
+
+    def _merge_chunks(self, original_chunks: List[Dict[str, Any]], modified: Dict[str, str]) -> str:
+        """Replace modified chunks, keep unchanged, build final code."""
+        result_lines = []
+        for c in original_chunks:
+            action = c.get("action", "KEEP")
+            if action in ("ADD_METHOD", "ADD_FIELD", "ADD_CONSTANT", "ADD_ENUM"):
+                if c["id"] in modified:
+                    result_lines.append(modified[c["id"]])
+                elif c.get("text"):
+                    result_lines.append(c["text"])
+                continue
+            if action == "DELETE":
+                continue
+            if c["id"] in modified:
+                result_lines.append(modified[c["id"]])
+            else:
+                result_lines.append(c.get("text", ""))
+        return '\n'.join(line for line in result_lines if line)
+
     async def execute_orchestration(
         self, client: ClientConnection, user_code: str, user_instruction: str
     ) -> None:
@@ -124,6 +253,15 @@ class Orchestrator:
                 if state.current_phase == 2:
                     await self._run_phase_2(client, state)
                 elif state.current_phase == 3:
+                    # Try chunk-based editing on first attempt
+                    if (state.strategy_iter == 1
+                        and not state.syntax_error_context
+                        and state.active_plan
+                        and state.active_plan.get("ast_mutations")):
+                        await self._run_chunked_phase_3(client, state)
+                        if state.working_code.strip() != state.base_code.strip():
+                            state.current_phase = 4  # Skip normal Phase 3, go to validation
+                            continue
                     await self._run_phase_3(client, state)
                 elif state.current_phase == 4:
                     await self._run_phase_4(client, state)
@@ -942,6 +1080,48 @@ class Orchestrator:
             )
 
         return result
+
+    async def _run_chunked_phase_3(
+        self, client: ClientConnection, state: OrchestrationState
+    ) -> None:
+        """Phase 3 via chunk-based editing — only modified chunks go to Generator."""
+        await self._notify(client, Role.Generator, "Ph3: Chunk-based editing...", phase=3)
+        await self.agent_service.swap(self.model_config["generator"])
+        await self.agent_service.clear_context()
+
+        chunks = self._chunkify(state.base_code)
+        chunks = self._map_plan_to_chunks(state.active_plan or {}, chunks)
+        prompt = self._build_chunked_prompt(chunks, state.base_code)
+
+        system = self.prompts["generator"]["coder_guidance"].get(
+            "CHUNK_EDITOR",
+            self.prompts["generator"]["coder"]
+        )
+
+        messages: List[ChatCompletionRequestMessage] = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": prompt},
+        ]
+
+        raw = await self.agent_service.generate(messages, temp=0.1, max_tokens=3072)
+        coder_text = raw["choices"][0]["message"].get("content") or ""
+        print(f"\n--- Chunk Editor Output ---\n{coder_text}\n-------------------------")
+
+        modified = self._parse_chunked_output(coder_text)
+        if modified:
+            working_code = self._merge_chunks(chunks, modified)
+            state.working_code = working_code
+            state.syntax_iter = 0
+            state.syntax_error_context = None
+            await self._notify(
+                client, Role.Generator,
+                f"Chunk editing complete ({len(modified)} chunks modified).",
+                content=working_code
+            )
+            print(working_code)
+        else:
+            # No chunks parsed — keep original as fallback
+            state.working_code = state.base_code
 
     async def _notify(
         self,

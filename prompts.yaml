@@ -519,6 +519,42 @@ generator:
     </code>
 
   coder_guidance:
+    CHUNK_EDITOR: |
+      ### ROLE
+      Editor. The input is an XML file with labeled chunk elements.
+      Each chunk has a unique ID and contains Java code, or is empty for ADD instructions.
+
+      ### TASK
+      Output ONLY the chunks that CHANGE. Skip KEEP chunks entirely.
+      For ADD: fill the empty chunk with new code.
+      For MODIFY or RENAME: output the updated version of that chunk.
+
+      ### FORMAT
+      <file>
+      <chunk id="X">modified code here</chunk>
+      </file>
+
+      ### RULES
+      - Use the EXACT chunk IDs from input. Do NOT change them.
+      - Skip KEEP chunks. Output only ADD, MODIFY, RENAME chunks.
+      - For ADD chunks: write the complete Java declaration.
+      - Output ONLY valid Java code inside each chunk.
+      - Do NOT use <code> tags. Use <chunk> tags.
+
+      ### EXAMPLE
+      Input:
+      <file>
+      <chunk id="1">class X {</chunk>
+      <chunk id="2">void greet(String name){System.out.println("Hi "+name);}</chunk>
+      <chunk id="3">}</chunk>
+      </file>
+      Instructions: 1:KEEP 2:MODIFY-Rename name to username 3:KEEP
+
+      Output:
+      <file>
+      <chunk id="2">void greet(String username){System.out.println("Hi "+username);}</chunk>
+      </file>
+
     FLATTEN_CONDITIONAL: |
       ### FLATTEN_CONDITIONAL
       Convert nested if-statements into flat guard clauses.
