@@ -10,6 +10,7 @@ from app.modules.agent_service import AgentService
 from app.modules.connection_manager import ClientConnection
 from app.modules.context_manager import DatabaseManager
 from app.modules.validator import Validator
+from app.utils.ast_matcher import ASTMatcher
 from app.utils.formatters import format_agent_output, format_plan_for_generator
 from app.utils.paths import MODELS_CONFIG_PATH, PROMPTS_CONFIG_PATH
 from app.utils.performance import PerformanceTracker
@@ -49,6 +50,12 @@ class OrchestrationState(BaseModel):
     syntax_error_context: Optional[Dict] = None
     structural_fix_attempts: int = 0
 
+    # Sequential Mutation Application
+    mutation_queue: List[Dict] = []
+    mutation_index: int = 0
+    sequential_attempts: int = 0
+    gen_timings: List[Dict] = []
+
     # Sub-Step Decomposition
     architect_analysis: Optional[Dict] = None
 
@@ -73,6 +80,9 @@ class OrchestrationState(BaseModel):
 
 
 class Orchestrator:
+    USE_SEQUENTIAL: bool = True
+    SKIP_JUDGE: bool = False
+
     def __init__(
         self,
         agent_service: AgentService,
@@ -90,6 +100,20 @@ class Orchestrator:
                 self.prompts: Dict[str, Any] = yaml.safe_load(p_config)
         except yaml.YAMLError as e:
             print(f"Error loading config: {e}")
+
+    @staticmethod
+    def _order_mutations(mutations: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Order mutations by dependency: RENAME first, then ADD_*, then MODIFY."""
+        def sort_key(m: Dict[str, Any]) -> int:
+            action = m.get("action", "")
+            if action == "RENAME_SYMBOL":
+                return 0
+            if action.startswith("ADD_"):
+                return 1
+            if action in ("MODIFY_METHOD", "REMOVE_METHOD"):
+                return 2
+            return 3
+        return sorted(mutations, key=sort_key)
 
     def _chunkify(self, code: str) -> List[Dict[str, Any]]:
         """Split Java code into labeled chunks at structural boundaries."""
@@ -234,6 +258,8 @@ class Orchestrator:
             user_instruction=user_instruction,
         )
 
+        self.state = state
+
         try:
             # 2. Persist session start
             self.db.create_session(
@@ -253,18 +279,25 @@ class Orchestrator:
                 if state.current_phase == 2:
                     await self._run_phase_2(client, state)
                 elif state.current_phase == 3:
-                    # Try chunk-based editing on first attempt
-                    if (state.strategy_iter == 1
+                    # Sequential on first attempt for multi-mutation plans
+                    if (self.USE_SEQUENTIAL
+                        and state.strategy_iter == 1
                         and not state.syntax_error_context
                         and state.active_plan
-                        and state.active_plan.get("ast_mutations")):
-                        await self._run_chunked_phase_3(client, state)
-                        if state.working_code.strip() != state.base_code.strip():
-                            state.current_phase = 4  # Skip normal Phase 3, go to validation
+                        and len(state.active_plan.get("ast_mutations", [])) > 1):
+                        await self._run_sequential_phase_3(client, state)
+                        if state.mutation_index >= len(state.mutation_queue):
+                            state.current_phase = 4
                             continue
+                        state.working_code = state.base_code
+                        state.mutation_index = 0
+                        state.mutation_queue = []
+                        state.sequential_attempts = 0
                     await self._run_phase_3(client, state)
                 elif state.current_phase == 4:
                     await self._run_phase_4(client, state)
+                    if self.SKIP_JUDGE and state.current_phase == 5:
+                        state.current_phase = 6
                 elif state.current_phase == 5:
                     await self._run_phase_5(client, state)
                 elif state.current_phase == 6:
@@ -445,6 +478,31 @@ class Orchestrator:
         architect_res = ResponseParser.extract_json(arch_text, ASTArchitectResponse)
         state.active_plan = architect_res.ast_modification_plan.model_dump()
 
+        # Enrich plan with concrete mutation details from code analysis
+        intent_key = state.intent_packet.get("specific_intent", "") if state.intent_packet else None
+        target_method = state.intent_packet.get("scope_anchor", {}).get("member", "") if state.intent_packet else None
+        enriched = ASTMatcher.enrich_mutations(
+            state.base_code,
+            state.active_plan.get("ast_mutations", []),
+            intent=intent_key,
+            target_method=target_method,
+        )
+        state.active_plan["ast_mutations"] = enriched
+        state.active_plan["enriched_by"] = "ASTMatcher"
+
+        # Safety: deduplicate identical (action, target) pairs + cap at 8
+        deduped = []
+        seen = set()
+        for m in state.active_plan.get("ast_mutations", []):
+            key = (m.get("action"), m.get("target"))
+            if key not in seen:
+                seen.add(key)
+                deduped.append(m)
+        if len(deduped) > 8:
+            print(f"WARNING: Truncated plan: {len(deduped)} → 8 mutations")
+            deduped = deduped[:8]
+        state.active_plan["ast_mutations"] = deduped
+
         await self._notify(
             client,
             Role.Planner,
@@ -591,6 +649,157 @@ class Orchestrator:
                 state.strategy_iter_incremented = True
             state.syntax_iter = 0
             state.current_phase = 2
+
+    async def _run_sequential_phase_3(
+        self, client: ClientConnection, state: OrchestrationState
+    ) -> None:
+        """Apply mutations one at a time. Full class context, single target."""
+        import time as _time
+
+        mutations = self._order_mutations(
+            state.active_plan.get("ast_mutations", [])
+        )
+        state.mutation_queue = mutations
+        state.mutation_index = 0
+        state.sequential_attempts = 0
+        state.gen_timings = []
+
+        await self._notify(
+            client, Role.Generator,
+            f"Ph3: Sequential editing ({len(mutations)} mutations)...",
+            phase=3
+        )
+        await self.agent_service.swap(self.model_config["generator"])
+        await self.agent_service.clear_context()
+
+        system_content = self.prompts["generator"]["coder"]
+        if state.intent_packet:
+            intent_key = state.intent_packet.get("specific_intent", "")
+            guidance = self.prompts["generator"]["coder_guidance"].get(intent_key, "")
+            if guidance:
+                system_content += "\n" + guidance
+
+        while state.mutation_index < len(state.mutation_queue):
+            mutation = state.mutation_queue[state.mutation_index]
+            action = mutation.get("action", "")
+            target = mutation.get("target", "")
+            details = mutation.get("details", {})
+
+            current_code = state.working_code
+            mutation_text = (
+                f"{action} {target}\n"
+                f"Details: {json.dumps(details, indent=2)}"
+            )
+            user_prompt = (
+                f"Current Code:\n<code>{current_code}</code>\n\n"
+                f"Apply ONLY this mutation ({state.mutation_index + 1}/{len(state.mutation_queue)}):\n"
+                f"{mutation_text}\n\n"
+                f"Output ONLY the complete updated code in <code> tags. "
+                f"Do NOT change anything except this mutation."
+            )
+
+            messages: List[ChatCompletionRequestMessage] = [
+                {"role": "system", "content": system_content},
+                {"role": "user", "content": user_prompt},
+            ]
+
+            t0 = _time.time()
+            raw = await self.agent_service.generate(
+                messages, temp=0.1, max_tokens=3072
+            )
+            gen_time_ms = int((_time.time() - t0) * 1000)
+
+            coder_text = raw["choices"][0]["message"].get("content") or ""
+            new_code = ResponseParser.extract_xml(coder_text, "code")
+
+            timing_entry = {
+                "step": state.mutation_index + 1,
+                "action": action,
+                "target": target,
+                "time_ms": gen_time_ms,
+            }
+
+            if not new_code:
+                state.sequential_attempts += 1
+                timing_entry["status"] = "NO_CODE_BLOCK"
+                state.gen_timings.append(timing_entry)
+                if state.sequential_attempts <= 3:
+                    await self._notify(
+                        client, Role.Generator,
+                        f"No <code> block for {action} {target}. Retrying (attempt {state.sequential_attempts}/3)..."
+                    )
+                    continue
+                state.working_code = state.base_code
+                timing_entry["status"] = "EXHAUSTED"
+                state.gen_timings.append(timing_entry)
+                return
+
+            syntax_res = self.validator.check_syntax(new_code)
+            if not syntax_res["is_valid"]:
+                state.sequential_attempts += 1
+                timing_entry["status"] = "SYNTAX_FAIL"
+                errors = syntax_res.get("errors", ["Unknown"])
+                timing_entry["error"] = str(errors[0]) if errors else "Unknown"
+                state.gen_timings.append(timing_entry)
+                if state.sequential_attempts <= 3:
+                    state.syntax_error_context = {
+                        "attempt": state.sequential_attempts,
+                        "error": str(errors[0]) if errors else "Unknown",
+                        "broken_code": new_code,
+                    }
+                    await self._notify(
+                        client, Role.Generator,
+                        f"Syntax fail on {action} {target}. Healing (attempt {state.sequential_attempts}/3)..."
+                    )
+                    continue
+                state.working_code = state.base_code
+                return
+
+            target_scopes = [target]
+            if state.intent_packet:
+                member = state.intent_packet["scope_anchor"].get("member", "")
+                if member and member not in target_scopes:
+                    target_scopes.append(member)
+
+            boundary_finding = self.validator.verify_boundary(
+                current_code, new_code, target_scopes
+            )
+            if boundary_finding:
+                state.sequential_attempts += 1
+                timing_entry["status"] = "BOUNDARY_FAIL"
+                timing_entry["error"] = boundary_finding.error_report.message
+                state.gen_timings.append(timing_entry)
+                if state.sequential_attempts <= 3:
+                    await self._notify(
+                        client, Role.Generator,
+                        f"Boundary violation on {action} {target}. Retrying (attempt {state.sequential_attempts}/3)..."
+                    )
+                    continue
+                state.working_code = state.base_code
+                return
+
+            # Success
+            state.working_code = new_code
+            state.sequential_attempts = 0
+            state.syntax_error_context = None
+            timing_entry["status"] = "OK"
+            state.gen_timings.append(timing_entry)
+            state.mutation_index += 1
+
+            print(f"\n--- Sequential Step {state.mutation_index}/{len(state.mutation_queue)} ---")
+            print(f"Action: {action} {target} | Time: {gen_time_ms}ms | Status: OK")
+            await self._notify(
+                client, Role.Generator,
+                f"Applied {action} {target} ({state.mutation_index}/{len(state.mutation_queue)}). {gen_time_ms}ms"
+            )
+
+        state.syntax_iter = 0
+        state.syntax_error_context = None
+        total_time = sum(e["time_ms"] for e in state.gen_timings)
+        await self._notify(
+            client, Role.Generator,
+            f"All {len(state.mutation_queue)} mutations applied. Total gen time: {total_time}ms"
+        )
 
     async def _run_phase_4(
         self, client: ClientConnection, state: OrchestrationState
