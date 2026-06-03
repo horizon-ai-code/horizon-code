@@ -89,6 +89,9 @@ class ASTMutationDetails(BaseModel):
     logic_changes: List[str] = []
     body_abstract: Optional[str] = None
 
+    # Atomic value for ADD_CONSTANT / ADD_FIELD (safe single field)
+    value: Optional[str] = None           # e.g., "10000", "3.14159", "true"
+
 
 class ASTMutation(BaseModel):
     action: MutationAction  # e.g., ADD_METHOD, REMOVE_METHOD

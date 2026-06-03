@@ -122,6 +122,12 @@ planner:
     - Describe what THIS mutation does for THIS specific intent.
     - Never reuse body_abstract text from a different intent.
 
+    ### CONCRETE VALUES
+    For ADD_CONSTANT and ADD_FIELD, include the exact literal value:
+       "value": the exact literal (e.g., "10000", "3.14159", "true")
+
+    Do NOT add find_text, replace_text, or insert_after — these are computed automatically.
+
     ### VALID ACTIONS
     ADD_METHOD | MODIFY_METHOD | ADD_FIELD | ADD_CONSTANT | RENAME_SYMBOL
 
