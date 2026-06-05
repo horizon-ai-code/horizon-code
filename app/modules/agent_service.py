@@ -1,6 +1,6 @@
 import asyncio
 import gc
-from typing import List, Literal, Optional, Type, TypeVar, cast, overload
+from typing import Callable, List, Literal, Optional, Type, TypeVar, cast, overload
 
 from llama_cpp import Iterator, Llama
 from llama_cpp.llama_types import (
@@ -125,6 +125,7 @@ class AgentService:
         max_tokens: int,
         stream: Literal[False] = False,
         response_model: Optional[Type[T]] = None,
+        check_repetition: Optional[Callable[[str], bool]] = None,
     ) -> CreateChatCompletionResponse: ...
 
     @overload
@@ -135,6 +136,7 @@ class AgentService:
         max_tokens: int,
         stream: Literal[True],
         response_model: Optional[Type[T]] = None,
+        check_repetition: Optional[Callable[[str], bool]] = None,
     ) -> Iterator[CreateChatCompletionStreamResponse]: ...
 
     async def generate(
@@ -144,11 +146,14 @@ class AgentService:
         max_tokens: int,
         stream: bool = False,
         response_model: Optional[Type[T]] = None,
+        check_repetition: Optional[Callable[[str], bool]] = None,
     ) -> CreateChatCompletionResponse | Iterator[CreateChatCompletionStreamResponse]:
         """
         Generates completions with repetition penalty to prevent infinite loops.
         Uses internal streaming to allow safe interruption between tokens.
         If response_model is provided, enforces GBNF grammar for strict JSON output.
+        If check_repetition is provided, calls it with accumulated text after each
+        chunk; if it returns True, generation stops immediately.
         """
         async with self._model_lock:
             model = self.model
@@ -189,6 +194,7 @@ class AgentService:
                 return iterator
 
             chunks: List[CreateChatCompletionStreamResponse] = []
+            repetition_stopped = False
             try:
                 while not self._stop_event.is_set():
 
@@ -202,6 +208,16 @@ class AgentService:
                     if chunk is None:
                         break
                     chunks.append(chunk)
+
+                    if check_repetition and len(chunks) % 10 == 0:
+                        content_so_far = "".join(
+                            c["choices"][0].get("delta", {}).get("content") or ""
+                            for c in chunks
+                        )
+                        if check_repetition(content_so_far):
+                            print("Repetition loop detected — stopping generation")
+                            repetition_stopped = True
+                            break
 
                 if self._stop_event.is_set():
                     raise asyncio.CancelledError()

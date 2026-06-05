@@ -54,6 +54,22 @@ def format_plan_for_generator(plan: Dict[str, Any], base_code: str) -> str:
         if body:
             instruction += f"\n   - Body: {body}"
 
+        value = details.get("value")
+        if value:
+            instruction += f"\n   - Value: {value}"
+
+        find_text = details.get("find_text")
+        if find_text:
+            instruction += f"\n   - Find: {find_text}"
+
+        replace_text = details.get("replace_text")
+        if replace_text:
+            instruction += f"\n   - Replace: {replace_text}"
+
+        insert_after = details.get("insert_after")
+        if insert_after:
+            instruction += f"\n   - Insert after: {insert_after}"
+
         instructions.append(instruction)
 
     instructions.append("\nVERIFY before outputting:")

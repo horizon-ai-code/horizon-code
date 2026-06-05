@@ -13,3 +13,9 @@ GEMINI.md
 .agents
 
 test_results/
+
+.opencode/
+
+session_status.md
+
+tests/validation/

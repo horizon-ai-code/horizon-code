@@ -1,9 +1,25 @@
 import re
 import json
-from typing import Type, TypeVar, Optional, Any
-from pydantic import BaseModel, ValidationError
+from typing import Any, Callable, Optional, Type, TypeVar
+from pydantic import BaseModel
 
 T = TypeVar("T", bound=BaseModel)
+
+
+def detect_repetition(text: str, min_pattern: int = 80, threshold: int = 3) -> bool:
+    """Detect if the model is stuck in a generation loop.
+
+    Strips trailing structural characters (closing brackets, braces, commas)
+    then counts non-overlapping occurrences of the last min_pattern characters.
+    If they appear >= threshold times, the model is repeating itself.
+    """
+    if len(text) < min_pattern * threshold:
+        return False
+    clean = text.rstrip(" \n\r\t]},>")
+    if len(clean) < min_pattern * threshold:
+        return False
+    return clean.count(clean[-min_pattern:]) >= threshold
+
 
 class ResponseParser:
     @staticmethod

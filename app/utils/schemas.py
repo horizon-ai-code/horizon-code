@@ -89,6 +89,9 @@ class ASTMutationDetails(BaseModel):
     logic_changes: List[str] = []
     body_abstract: Optional[str] = None
 
+    # Atomic value for ADD_CONSTANT / ADD_FIELD (safe single field)
+    value: Optional[str] = None           # e.g., "10000", "3.14159", "true"
+
 
 class ASTMutation(BaseModel):
     action: MutationAction  # e.g., ADD_METHOD, REMOVE_METHOD
@@ -116,10 +119,15 @@ class AuditScratchpad(BaseModel):
     logic_comparison: str = ""
 
 
+class AuditIssue(BaseModel):
+    issue_type: Literal["IDENTICAL_CODE", "LOGIC_DRIFT", "SEMANTIC_DRIFT"]
+    description: str = Field(max_length=100)
+
+
 class StructuralAuditorResponse(BaseModel):
     audit_scratchpad: AuditScratchpad
     verdict: Literal["ACCEPT", "REVISE"]
-    issues: List[str]
+    issues: List[AuditIssue]
 
 
 class ErrorReport(BaseModel):
