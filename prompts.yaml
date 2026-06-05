@@ -579,9 +579,11 @@ generator:
       - Do NOT merge multiple guard clauses into one check using || or &&.
       - Do NOT change any exception type or error message.
       - Do NOT leave any if-inside-if nesting.
+      - Do NOT use loop variables (j, k, l) before their for-loop declaration.
       CONSTRAINTS:
       - Each nested condition becomes a separate guard clause at method top.
       - Each guard throws or returns immediately. No if-statements nested inside other ifs.
+      - Each guard clause must only use variables already declared in the outer scope or the current loop's variable.
 
     DECOMPOSE_CONDITIONAL: |
       ### DECOMPOSE_CONDITIONAL
@@ -604,7 +606,8 @@ generator:
       - Do NOT change the method signature.
       CONSTRAINTS:
       - Each boolean from instructions must be declared.
-      - Inside target method: declare variables, assign conditions, use in if.
+      - The boolean variable must replace the original compound condition in the if-statement or return expression.
+      - Inside target method: declare variables, assign conditions, use in conditional expression.
 
     CONSOLIDATE_CONDITIONAL: |
       ### CONSOLIDATE_CONDITIONAL

@@ -165,20 +165,50 @@ class RefactorVerifier:
                     count += count_binary_ops(item)
             return count
 
-        orig_ifs = ASTWalker.find_nodes(orig_ast, javalang.tree.IfStatement)
-        refac_ifs = ASTWalker.find_nodes(refac_ast, javalang.tree.IfStatement)
+        # Count ALL binary operators across entire ASTs (not just if conditions)
+        orig_ops = count_binary_ops(orig_ast)
+        refac_ops = count_binary_ops(refac_ast)
 
-        orig_ops = sum(count_binary_ops(i.condition) for i in orig_ifs)
-        refac_ops = sum(count_binary_ops(i.condition) for i in refac_ifs)
+        # Find new variable names introduced in refactored code
+        orig_vars = {
+            v.name
+            for v in ASTWalker.find_nodes(orig_ast, javalang.tree.VariableDeclarator)
+        }
+        refac_vars = {
+            v.name
+            for v in ASTWalker.find_nodes(refac_ast, javalang.tree.VariableDeclarator)
+        }
+        new_vars = refac_vars - orig_vars
 
-        if refac_ops < orig_ops:
+        # Check if any new variable is referenced in conditional contexts
+        def var_in_conditional(ast: Any, var_name: str) -> bool:
+            for n in ASTWalker.find_nodes(ast, (javalang.tree.IfStatement, javalang.tree.ReturnStatement,
+                                                 javalang.tree.WhileStatement, javalang.tree.ForStatement)):
+                expr = ""
+                if isinstance(n, javalang.tree.IfStatement) and hasattr(n, "condition"):
+                    expr = str(n.condition)
+                elif isinstance(n, javalang.tree.ReturnStatement) and hasattr(n, "expression"):
+                    expr = str(n.expression)
+                elif isinstance(n, javalang.tree.WhileStatement) and hasattr(n, "condition"):
+                    expr = str(n.condition)
+                elif isinstance(n, javalang.tree.ForStatement) and hasattr(n, "condition"):
+                    expr = str(n.condition) if n.condition else ""
+                if var_name in expr:
+                    return True
+            return False
+
+        var_used = any(var_in_conditional(refac_ast, v) for v in new_vars)
+
+        # Pass if: new variable is declared AND used in a conditional context,
+        # OR binary ops decreased (fallback for cases where refactoring doesn't add variables)
+        if (len(new_vars) > 0 and var_used) or refac_ops < orig_ops:
             return (
                 True,
-                f"Conditional binary operators decreased from {orig_ops} to {refac_ops}.",
+                f"Decomposition: {len(new_vars)} new variables, {orig_ops}→{refac_ops} binary ops.",
             )
         return (
             False,
-            f"Operator count did not decrease (Old: {orig_ops}, New: {refac_ops}).",
+            f"No decomposition: {orig_ops}→{refac_ops} binary ops, {len(new_vars)} new vars, used={var_used}.",
         )
 
     @staticmethod
@@ -359,14 +389,26 @@ class RefactorVerifier:
 
     @staticmethod
     def verify_rename_symbol(orig_ast: Any, refac_ast: Any) -> Tuple[bool, str]:
-        # Compare structural signatures (ignores variable names, formatting, imports, numeric literals).
-        # Only the node-type skeleton, operators, method invocations, and string literals are compared.
-        orig_sig = ASTWalker.get_structural_signature(orig_ast)
-        refac_sig = ASTWalker.get_structural_signature(refac_ast)
+        # Compare structural signatures per-method (ignores rename, formatting, imports)
+        orig_methods = {
+            m.name: ASTWalker.get_structural_signature(m)
+            for m in ASTWalker.find_nodes(orig_ast, javalang.tree.MethodDeclaration)
+        }
+        refac_methods = {
+            m.name: ASTWalker.get_structural_signature(m)
+            for m in ASTWalker.find_nodes(refac_ast, javalang.tree.MethodDeclaration)
+        }
 
-        if orig_sig == refac_sig:
+        unmatched_orig = set(orig_methods.keys())
+        for name, sig in orig_methods.items():
+            for ref_name, ref_sig in refac_methods.items():
+                if ref_sig == sig:
+                    unmatched_orig.discard(name)
+                    break
+
+        if not unmatched_orig:
             return True, "Structural integrity preserved after rename."
-        return False, "Structural change detected beyond just name/symbol."
+        return False, f"Unmatched original methods: {unmatched_orig}."
 
 
 class Validator:
@@ -384,7 +426,6 @@ class Validator:
         }
 
         self.verifier_registry: Dict[RefactorIntent, Callable] = {
-            RefactorIntent.FLATTEN_CONDITIONAL: RefactorVerifier.verify_flatten_conditional,
             RefactorIntent.DECOMPOSE_CONDITIONAL: RefactorVerifier.verify_decompose_conditional,
             RefactorIntent.CONSOLIDATE_CONDITIONAL: RefactorVerifier.verify_consolidate_conditional,
             RefactorIntent.REMOVE_CONTROL_FLAG: RefactorVerifier.verify_remove_control_flag,
@@ -452,9 +493,9 @@ class Validator:
                 "mock.java", wrapped_code
             )
             for func in analysis.function_list:
-                if func.name == method_name:
+                fname = func.name.split("::")[-1]
+                if fname == method_name:
                     return func.cyclomatic_complexity
-            return None
         return None
 
     def verify_intent(

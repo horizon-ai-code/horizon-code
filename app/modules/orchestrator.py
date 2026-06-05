@@ -678,11 +678,29 @@ class Orchestrator:
                 f"{action} {target}\n"
                 f"Details: {json.dumps(details, indent=2)}"
             )
+
+            # For MODIFY steps, include context about ADD_* items already applied
+            context = ""
+            if action.startswith("MODIFY_") and state.mutation_index > 0:
+                added_items = [
+                    m for m in state.mutation_queue[:state.mutation_index]
+                    if m.get("action", "").startswith("ADD_")
+                ]
+                if added_items:
+                    context = "\nPreviously added items (must be referenced in updated method):\n"
+                    for item in added_items:
+                        d = item.get("details", {})
+                        extra = f" ({d.get('type', '')})" if d.get("type") else ""
+                        if d.get("value"):
+                            extra += f" = {d['value']}"
+                        context += f"  - {item['action']} {item['target']}{extra}\n"
+
             user_prompt = (
                 f"Current Code:\n<code>{current_code}</code>\n\n"
                 f"Apply ONLY this mutation ({state.mutation_index + 1}/{len(state.mutation_queue)}):\n"
-                f"{mutation_text}\n\n"
-                f"Output ONLY the complete updated code in <code> tags. "
+                f"{mutation_text}\n"
+                f"{context}"
+                f"\nOutput ONLY the complete updated code in <code> tags. "
                 f"Do NOT change anything except this mutation."
             )
 
