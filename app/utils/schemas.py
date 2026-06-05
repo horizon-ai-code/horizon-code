@@ -119,10 +119,15 @@ class AuditScratchpad(BaseModel):
     logic_comparison: str = ""
 
 
+class AuditIssue(BaseModel):
+    issue_type: Literal["IDENTICAL_CODE", "LOGIC_DRIFT", "SEMANTIC_DRIFT"]
+    description: str = Field(max_length=100)
+
+
 class StructuralAuditorResponse(BaseModel):
     audit_scratchpad: AuditScratchpad
     verdict: Literal["ACCEPT", "REVISE"]
-    issues: List[str]
+    issues: List[AuditIssue]
 
 
 class ErrorReport(BaseModel):

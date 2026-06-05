@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 
 import yaml
 from llama_cpp import ChatCompletionRequestMessage
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from app.modules.agent_service import AgentService
 from app.modules.connection_manager import ClientConnection
@@ -15,7 +15,7 @@ from app.utils.ast_matcher import ASTMatcher
 from app.utils.formatters import format_agent_output, format_plan_for_generator
 from app.utils.paths import MODELS_CONFIG_PATH, PROMPTS_CONFIG_PATH
 from app.utils.performance import PerformanceTracker
-from app.utils.response_parser import ResponseParser
+from app.utils.response_parser import ResponseParser, detect_repetition
 from app.utils.schemas import (
     ArchitectAnalysisResponse,
     ASTArchitectResponse,
@@ -456,16 +456,28 @@ class Orchestrator:
             {"role": "user", "content": arch_prompt},
         ]
 
-        raw = await self.agent_service.generate(
-            messages, temp=0.2, max_tokens=2048, response_model=ASTArchitectResponse
-        )
-        arch_text = raw["choices"][0]["message"].get("content") or ""
-        print(
-            f"\n--- Planner Architect Output ---\n{arch_text}\n------------------------------"
-        )
-
-        architect_res = ResponseParser.extract_json(arch_text, ASTArchitectResponse)
-        state.active_plan = architect_res.ast_modification_plan.model_dump()
+        for _attempt in range(2):
+            temp = 0.2 if _attempt == 0 else 0.5
+            try:
+                raw = await self.agent_service.generate(
+                    messages, temp=temp, max_tokens=2048,
+                    response_model=ASTArchitectResponse,
+                    check_repetition=detect_repetition,
+                )
+                arch_text = raw["choices"][0]["message"].get("content") or ""
+                header = f"--- Planner Architect Output ---"
+                if _attempt > 0:
+                    header = f"--- Planner Architect Output (Retry {_attempt}) ---"
+                print(f"\n{header}\n{arch_text}\n------------------------------")
+                architect_res = ResponseParser.extract_json(arch_text, ASTArchitectResponse)
+                state.active_plan = architect_res.ast_modification_plan.model_dump()
+                break
+            except (ValidationError, ValueError) as e:
+                if _attempt == 0:
+                    print(f"  Architect attempt 1 failed. Retrying with temp=0.5...")
+                    await self.agent_service.clear_context()
+                else:
+                    raise
 
         # Enrich plan with concrete mutation details from code analysis
         intent_key = state.intent_packet.get("specific_intent", "") if state.intent_packet else None
@@ -1131,6 +1143,15 @@ class Orchestrator:
 
         audit_res = ResponseParser.extract_json(audit_text, StructuralAuditorResponse)
 
+        # Override: judge hallucinated IDENTICAL_CODE but code clearly changed
+        if (audit_res.verdict == "REVISE"
+            and audit_res.issues
+            and audit_res.issues[0].issue_type == "IDENTICAL_CODE"):
+            if state.working_code.strip() != state.base_code.strip():
+                print("WARNING: Judge hallucinated IDENTICAL_CODE — overriding to ACCEPT")
+                audit_res.verdict = "ACCEPT"
+                audit_res.issues = []
+
         await self._notify(
             client,
             Role.Judge,
@@ -1144,7 +1165,8 @@ class Orchestrator:
         else:
             await self._notify(client, Role.Judge, "Audit requested revision.")
             state.add_feedback(
-                {"failure_tier": FailureTier.TIER_3_JUDGE, "error": audit_res.issues}
+                {"failure_tier": FailureTier.TIER_3_JUDGE,
+                 "error": [i.model_dump() for i in audit_res.issues]}
             )
             if not state.strategy_iter_incremented:
                 state.strategy_iter += 1

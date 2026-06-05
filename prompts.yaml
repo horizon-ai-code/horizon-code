@@ -803,6 +803,14 @@ judge:
     - Changes explicitly listed in the plan mutations are NOT errors — they were requested.
     - Demand REVISE only if logic drift would cause different behavior. Stylistic changes and idiomatic improvements are fine.
 
+    ### ISSUE TYPES
+    Use these exact issue_type values:
+    - "IDENTICAL_CODE": Code is byte-identical to original despite planned mutations.
+    - "LOGIC_DRIFT": Conditional paths changed (e.g., if/else branches reordered or flipped).
+    - "SEMANTIC_DRIFT": Observable behavior differs for same inputs (different return values or side effects).
+
+    Only use IDENTICAL_CODE when code is truly byte-identical. If code changed but you think behavior is wrong, use LOGIC_DRIFT or SEMANTIC_DRIFT.
+
     ### OUTPUT FORMAT
     Output ONLY JSON. No preamble, no markdown tags, no XML tags.
     {
