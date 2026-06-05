@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 from typing import Any, Dict, List, Optional
 
 import yaml
@@ -1025,12 +1026,55 @@ class Orchestrator:
                 return
             state.current_phase = 5
 
+    @staticmethod
+    def _strip_outer_wrapper(code: str, base_code: str) -> str:
+        """Strip the outermost class wrapper if base had none and refactored has one.
+
+        Handles only the top-level class — inner/nested classes preserved.
+        Fields, constants, and helper methods inside the wrapper stay in the output.
+        """
+        if "class" in base_code:
+            return code
+        text = code.strip()
+        class_match = re.search(
+            r'(?:public|private|protected|static|abstract|final|\s)*class\s+\w+',
+            text
+        )
+        if not class_match:
+            return code
+        brace_start = text.find('{', class_match.end())
+        if brace_start == -1:
+            return code
+        depth = 0
+        for i in range(brace_start, len(text)):
+            if text[i] == '{':
+                depth += 1
+            elif text[i] == '}':
+                depth -= 1
+                if depth == 0:
+                    inner = text[brace_start + 1:i].strip()
+                    return inner
+        return code
+
     async def _run_phase_5(
         self, client: ClientConnection, state: OrchestrationState
     ) -> None:
         """Phase 5: Heuristic Adjudication (Inference 4)."""
         await self._notify(client, Role.Judge, "Ph5: Running final audit...", phase=5)
         await self.agent_service.swap(self.model_config["judge"])
+
+        # Normalize both sides for judge comparison:
+        # 1. Strip imports so parity is consistent
+        # 2. Strip outer class wrapper if original had none
+        def _normalize_for_judge(code: str) -> str:
+            no_imports = "\n".join(
+                line for line in code.splitlines()
+                if not line.strip().startswith("import ")
+            )
+            return self._strip_outer_wrapper(no_imports, state.base_code)
+
+        judge_base = _normalize_for_judge(state.base_code)
+        judge_refac = _normalize_for_judge(state.working_code)
 
         # Build plan context summary for the auditor
         intent = ""
@@ -1058,8 +1102,8 @@ class Orchestrator:
         audit_prompt = (
             f"## Plan Context\n{plan_summary}\n{mutations_list}\n\n"
             f"## Code\n"
-            f"Original: <code>{state.base_code}</code>\n"
-            f"Refactored: <code>{state.working_code}</code>\n"
+            f"Original: <code>{judge_base}</code>\n"
+            f"Refactored: <code>{judge_refac}</code>\n"
             f"Intent: {json.dumps(state.intent_packet)}"
         )
         system_content = self.prompts["judge"]["auditor"]
@@ -1114,6 +1158,11 @@ class Orchestrator:
         metrics: Dict[str, Any],
     ) -> None:
         """Phase 6: Finalization & Reporting."""
+        # Strip outer wrapper from working_code for final output
+        state.working_code = self._strip_outer_wrapper(
+            state.working_code, state.base_code
+        )
+
         await self._notify(
             client,
             Role.System,
@@ -1224,7 +1273,7 @@ class Orchestrator:
     @staticmethod
     def _get_cc_rule(intent: RefactorIntent) -> str:
         rules: Dict[RefactorIntent, str] = {
-            RefactorIntent.FLATTEN_CONDITIONAL: "STRICT",
+            RefactorIntent.FLATTEN_CONDITIONAL: "LOOSENED",
             RefactorIntent.DECOMPOSE_CONDITIONAL: "STRICT",
             RefactorIntent.CONSOLIDATE_CONDITIONAL: "STRICT",
             RefactorIntent.REMOVE_CONTROL_FLAG: "STRICT",

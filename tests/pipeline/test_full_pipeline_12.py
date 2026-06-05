@@ -346,7 +346,7 @@ async def run_case(case: Dict[str, Any], index: int, total: int) -> Dict[str, An
 
     orch = Orchestrator(agent, validator, db)
     orch.USE_SEQUENTIAL = True
-    orch.SKIP_JUDGE = True
+    orch.SKIP_JUDGE = False
 
     client = MockClient(f"test-{case_name}")
 
@@ -459,7 +459,7 @@ async def main() -> None:
 
     print(f"\n{'='*60}")
     print("Full Pipeline Test \u2014 12 Cases (1 per Intent)")
-    print(f"Mode: Orchestrator (USE_SEQUENTIAL=True, SKIP_JUDGE=True)")
+    print(f"Mode: Orchestrator (USE_SEQUENTIAL=True, SKIP_JUDGE=False)")
     print(f"{'='*60}")
 
     all_results = []
@@ -472,7 +472,7 @@ async def main() -> None:
         "total_cases": len(all_results),
         "config": {
             "USE_SEQUENTIAL": True,
-            "SKIP_JUDGE": True,
+            "SKIP_JUDGE": False,
         },
         "results": all_results,
     }
