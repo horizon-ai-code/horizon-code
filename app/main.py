@@ -92,6 +92,7 @@ async def entrypoint(websocket: WebSocket) -> None:
     client_conn: ClientConnection = connection.create_websocket_connection(
         websocket=websocket
     )
+    await client_conn.start_heartbeat()
     current_task: asyncio.Task | None = None
 
     async def run_orchestration(validated_data: RefactorRequest):
@@ -126,6 +127,14 @@ async def entrypoint(websocket: WebSocket) -> None:
                 await websocket.send_json(
                     {"type": "error", "message": "Malformed JSON payload", "details": str(e)}
                 )
+                continue
+
+            if data.get("type") == "pong":
+                client_conn.handle_pong()
+                continue
+
+            if data.get("type") == "reconnect":
+                await _handle_reconnect(data.get("session_id", ""), websocket)
                 continue
 
             if data.get("type") == "halt":
@@ -182,9 +191,51 @@ async def entrypoint(websocket: WebSocket) -> None:
     except Exception as e:
         print(f"An error occurred: {e}")
     finally:
+        await client_conn.stop_heartbeat()
         if current_task and not current_task.done():
             agent_service.stop()
             current_task.cancel()
+
+
+async def _handle_reconnect(session_id: str, ws: WebSocket) -> None:
+    """Handle frontend reconnection to an existing session."""
+    if not session_id:
+        await ws.send_json({"type": "error", "message": "Missing session_id"})
+        return
+
+    record = await connection.get_history_by_id(session_id)
+    if not record:
+        await ws.send_json({"type": "error", "message": "Session not found"})
+        return
+
+    new_conn = connection.create_websocket_connection(ws)
+    new_conn.id = session_id
+
+    if record.get("status") == "Completed":
+        await new_conn.send_result(
+            final_code=record.get("refactored_code", ""),
+            original_complexity=record.get("original_complexity"),
+            refactored_complexity=record.get("refactored_complexity"),
+            performance_metrics={
+                "avg_gpu_utilization": record.get("avg_gpu_utilization", 0),
+                "avg_gpu_memory": record.get("avg_gpu_memory", 0),
+                "avg_gpu_memory_used": record.get("avg_gpu_memory_used", 0),
+                "inference_time": record.get("inference_time", 0),
+            },
+            exit_status=record.get("exit_status", "UNKNOWN"),
+        )
+        insights = record.get("insights")
+        if insights:
+            await new_conn.send_insights(insights)
+        await new_conn.send_status(Role.System, "Session restored.")
+    elif record.get("status") in ("Processing", "Halted"):
+        orchestrator.current_client = new_conn
+        await new_conn.send_status(
+            Role.System,
+            f"Reconnected to ongoing session. Status: {record.get('status')}",
+        )
+    else:
+        await ws.send_json({"type": "error", "message": f"Unknown session status: {record.get('status')}"})
 
 
 @app.get("/api/history", response_model=list[HistoryStub], dependencies=[Depends(get_db)])

@@ -3,6 +3,7 @@ import json
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from app.modules.connection_manager import ClientConnection
 from app.modules.orchestrator import Orchestrator, OrchestrationState
 from app.modules.validator import Validator
 
@@ -101,3 +102,20 @@ class TestArchitectException(unittest.IsolatedAsyncioTestCase):
 
             await orch._run_phase_2(client, state)
             self.assertEqual(state.architect_analysis, {})
+
+    async def test_notify_skips_send_for_stale_client(self):
+        """_notify skips send_status when client is stale."""
+        agent = AsyncMock()
+        validator = Validator()
+        db = MagicMock()
+
+        with patch("builtins.open", MagicMock()), patch("yaml.safe_load", MagicMock()):
+            orch = Orchestrator(agent, validator, db)
+
+            client = AsyncMock()
+            client.id = "test-session"
+            client.is_stale = True
+            client.send_status = AsyncMock()
+
+            await orch._notify(client, MagicMock(), "test message")
+            client.send_status.assert_not_called()

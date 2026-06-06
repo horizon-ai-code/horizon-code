@@ -1,4 +1,6 @@
+import asyncio
 import uuid
+from datetime import datetime
 from typing import Any
 
 from fastapi import WebSocket, WebSocketDisconnect
@@ -13,10 +15,50 @@ class ClientConnection:
     and handles history persistence.
     """
 
+    HEARTBEAT_INTERVAL = 15
+    MAX_MISSED_PONGS = 2
+
     def __init__(self, websocket: WebSocket, db: DatabaseManager):
         self.websocket = websocket
         self.db = db
         self.id = str(uuid.uuid4())
+        self._missed_pongs = 0
+        self._heartbeat_task: asyncio.Task | None = None
+        self._heartbeat_running = False
+
+    @property
+    def is_stale(self) -> bool:
+        return self._missed_pongs >= self.MAX_MISSED_PONGS
+
+    async def start_heartbeat(self) -> None:
+        self._heartbeat_running = True
+        self._missed_pongs = 0
+        self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+
+    async def stop_heartbeat(self) -> None:
+        self._heartbeat_running = False
+        if self._heartbeat_task:
+            self._heartbeat_task.cancel()
+            try:
+                await self._heartbeat_task
+            except asyncio.CancelledError:
+                pass
+            self._heartbeat_task = None
+
+    async def _heartbeat_loop(self) -> None:
+        while self._heartbeat_running:
+            await asyncio.sleep(self.HEARTBEAT_INTERVAL)
+            if not self._heartbeat_running:
+                break
+            self._missed_pongs += 1
+            await self._safe_send({
+                "type": "ping",
+                "id": self.id,
+                "ts": datetime.utcnow().isoformat() + "Z",
+            })
+
+    def handle_pong(self) -> None:
+        self._missed_pongs = 0
 
     async def _safe_send(self, message: dict) -> None:
         """Send JSON to frontend, silently handling disconnect."""

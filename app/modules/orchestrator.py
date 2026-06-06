@@ -102,6 +102,7 @@ class Orchestrator:
         self.agent_service: AgentService = agent_service
         self.validator: Validator = validator
         self.db: DatabaseManager = db
+        self.current_client: ClientConnection | None = None
 
         try:
             with open(MODELS_CONFIG_PATH) as config:
@@ -134,6 +135,7 @@ class Orchestrator:
         Validation → Adjudication → Finalization. Handles retries,
         cancellation, and performance tracking.
         """
+        self.current_client = client
         tracker = PerformanceTracker()
         await tracker.start_tracking()
 
@@ -1320,9 +1322,12 @@ class Orchestrator:
         """Helper to print to terminal, persist to DB, and notify frontend."""
         print(f"[{role}] {message}")
 
+        # Use swap-able client reference for reconnection support
+        effective = self.current_client or client
+
         # Persist the log entry to the database in real-time
         self.db.log_status(
-            session_id=client.id,
+            session_id=effective.id,
             role=role.value,
             status=message,
             content=content,
@@ -1331,5 +1336,8 @@ class Orchestrator:
             inner_loop=inner_loop,
         )
 
+        if effective.is_stale:
+            return
+
         formatted_message = format_agent_output(message, content)
-        await client.send_status(role=role, content=formatted_message)
+        await effective.send_status(role=role, content=formatted_message)
