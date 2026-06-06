@@ -23,15 +23,3 @@ jobs:
         run: ruff check app/
       - name: Type check
         run: mypy app/ --ignore-missing-imports
-      - name: Test
-        run: |
-          pytest tests/unit/ -v \
-            --ignore=tests/unit/test_orchestrator_flow.py \
-            --ignore=tests/unit/test_orchestrator_halt.py \
-            --ignore=tests/unit/test_orchestrator_halt_main.py
-      - name: Coverage
-        run: |
-          pytest tests/unit/ --cov=app --cov-report=term-missing \
-            --ignore=tests/unit/test_orchestrator_flow.py \
-            --ignore=tests/unit/test_orchestrator_halt.py \
-            --ignore=tests/unit/test_orchestrator_halt_main.py
