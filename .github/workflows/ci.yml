@@ -22,7 +22,7 @@ jobs:
       - name: Lint
         run: ruff check app/
       - name: Type check
-        run: mypy app/ --ignore-missing-imports || true
+        run: mypy app/ --ignore-missing-imports
       - name: Test
         run: pytest tests/unit/ -v --ignore=tests/unit/test_orchestrator_flow.py
       - name: Coverage
