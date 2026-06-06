@@ -99,3 +99,6 @@ Key gotchas:
 - No context size management (issue 2) — feedback grows unbounded
 - Boundary check too strict (issue 3) — full SHA-256 hash flags noise as violations
 - CC check ignores intent type (issue 4) — EXTRACT_METHOD always fails
+- Repetition detection (`detect_repetition`) checks every 10 chunks, strips trailing `]}, ` before probe
+- Judge override fires only for `IDENTICAL_CODE` — `LOGIC_DRIFT`/`SEMANTIC_DRIFT` never overridden
+- Architect retry: temp=0.2 → 0.5 on `ValidationError`/`ValueError`, max 2 attempts

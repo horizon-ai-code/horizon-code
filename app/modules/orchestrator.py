@@ -1,8 +1,9 @@
 import asyncio
 import json
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any
 
+import javalang
 import yaml
 from llama_cpp import ChatCompletionRequestMessage
 from pydantic import BaseModel, ValidationError
@@ -27,6 +28,10 @@ from app.utils.schemas import (
 )
 from app.utils.types import ExitStatus, FailureTier, RefactorIntent, Role
 
+# ============================================================
+# SECTION 1: OrchestrationState
+# ============================================================
+
 
 class OrchestrationState(BaseModel):
     session_id: str
@@ -35,8 +40,8 @@ class OrchestrationState(BaseModel):
     user_instruction: str
 
     # Structural Artifacts
-    intent_packet: Optional[Dict] = None
-    active_plan: Optional[Dict] = None
+    intent_packet: dict | None = None
+    active_plan: dict | None = None
 
     # Loop Counters
     strategy_iter: int = 1  # Outer Loop (Max 3)
@@ -44,21 +49,21 @@ class OrchestrationState(BaseModel):
     syntax_iter: int = 0  # Inner Loop (Max 3)
 
     # Diagnostic Memory
-    cumulative_feedback: List[Dict] = []
+    cumulative_feedback: list[dict] = []
     feedback_cap: int = 3
 
     # Syntax Healing
-    syntax_error_context: Optional[Dict] = None
+    syntax_error_context: dict | None = None
     structural_fix_attempts: int = 0
 
     # Sequential Mutation Application
-    mutation_queue: List[Dict] = []
+    mutation_queue: list[dict] = []
     mutation_index: int = 0
     sequential_attempts: int = 0
-    gen_timings: List[Dict] = []
+    gen_timings: list[dict] = []
 
     # Sub-Step Decomposition
-    architect_analysis: Optional[Dict] = None
+    architect_analysis: dict | None = None
 
     # Lifecycle
     current_phase: int = 1
@@ -67,19 +72,25 @@ class OrchestrationState(BaseModel):
     # Baseline Metrics
     original_complexity: int = 0
 
-    def add_feedback(self, entry: Dict) -> None:
+    def add_feedback(self, entry: dict) -> None:
+        """Append a feedback entry, capping at feedback_cap (ring buffer)."""
         self.cumulative_feedback.append(entry)
         if len(self.cumulative_feedback) > self.feedback_cap:
             self.cumulative_feedback.pop(0)
 
-    def extend_feedback(self, entries: List[Dict]) -> None:
+    def extend_feedback(self, entries: list[dict]) -> None:
+        """Extend with multiple feedback entries, capped at feedback_cap."""
         self.cumulative_feedback.extend(entries)
         while len(self.cumulative_feedback) > self.feedback_cap:
             self.cumulative_feedback.pop(0)
 
 
+# ============================================================
+# SECTION 2: Orchestrator
+# ============================================================
+
+
 class Orchestrator:
-    USE_SEQUENTIAL: bool = True
     SKIP_JUDGE: bool = False
 
     def __init__(
@@ -93,17 +104,17 @@ class Orchestrator:
         self.db: DatabaseManager = db
 
         try:
-            with open(MODELS_CONFIG_PATH, "r") as config:
-                self.model_config: Dict[str, Any] = yaml.safe_load(config)
-            with open(PROMPTS_CONFIG_PATH, "r") as p_config:
-                self.prompts: Dict[str, Any] = yaml.safe_load(p_config)
+            with open(MODELS_CONFIG_PATH) as config:
+                self.model_config: dict[str, Any] = yaml.safe_load(config)
+            with open(PROMPTS_CONFIG_PATH) as p_config:
+                self.prompts: dict[str, Any] = yaml.safe_load(p_config)
         except yaml.YAMLError as e:
             print(f"Error loading config: {e}")
 
     @staticmethod
-    def _order_mutations(mutations: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _order_mutations(mutations: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Order mutations by dependency: RENAME first, then ADD_*, then MODIFY."""
-        def sort_key(m: Dict[str, Any]) -> int:
+        def sort_key(m: dict[str, Any]) -> int:
             action = m.get("action", "")
             if action == "RENAME_SYMBOL":
                 return 0
@@ -114,138 +125,15 @@ class Orchestrator:
             return 3
         return sorted(mutations, key=sort_key)
 
-    def _chunkify(self, code: str) -> List[Dict[str, Any]]:
-        """Split Java code into labeled chunks at structural boundaries."""
-        lines = code.strip().split('\n')
-        chunks = []
-        current = []
-        brace_depth = 0
-        chunk_id = 0
-
-        for line in lines:
-            stripped = line.strip()
-            current.append(line)
-            brace_depth += stripped.count('{') - stripped.count('}')
-
-            # Split at method/field boundaries — when brace depth goes to 0 after being >0
-            # Or at class-level declarations
-            if brace_depth == 0 and current:
-                # Check if this is a complete declaration
-                text = '\n'.join(current).strip()
-                if text:
-                    chunk_id += 1
-                    chunks.append({"id": str(chunk_id), "text": text, "action": "KEEP"})
-                current = []
-
-        # Remaining lines
-        if current:
-            text = '\n'.join(current).strip()
-            if text:
-                chunk_id += 1
-                chunks.append({"id": str(chunk_id), "text": text, "action": "KEEP"})
-
-        return chunks
-
-    def _map_plan_to_chunks(self, plan: dict, chunks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """For each mutation, mark target chunk for MODIFY, ADD, or DELETE."""
-        mutations = plan.get("ast_mutations", [])
-        if not mutations:
-            return chunks
-
-        add_counter = 0
-        for mutation in mutations:
-            action = mutation.get("action", "")
-            target = mutation.get("target", "")
-            details = mutation.get("details", {})
-
-            if action in ("ADD_METHOD", "ADD_FIELD", "ADD_CONSTANT", "ADD_ENUM"):
-                add_counter += 1
-                typ = details.get("type", "") or ""
-                mods = " ".join(details.get("modifiers", []))
-                body = details.get("body_abstract", "") or ""
-                signature = f"{mods} {typ} {target}".strip()
-                if action == "ADD_CONSTANT":
-                    signature = f"{mods} {typ} {target}".strip() if typ else f"static final {target}"
-                elif action == "ADD_FIELD":
-                    signature = f"{mods} {typ} {target}".strip() if typ else f"private {target}"
-                elif action == "ADD_METHOD":
-                    signature = f"{mods} {typ} {target}".strip() if typ else target
-
-                chunks.insert(0, {
-                    "id": f"add-{add_counter}",
-                    "text": "",
-                    "action": action,
-                    "instruction": f"{action} — {body}" if body else f"{action}: declare {signature}",
-                })
-
-            elif action in ("MODIFY_METHOD", "RENAME_SYMBOL"):
-                for chunk in chunks:
-                    if target in chunk["text"] and chunk.get("action") == "KEEP":
-                        chunk["action"] = action
-                        chunk["instruction"] = (
-                            f"{action} — {details.get('body_abstract', '') or f'Apply {action} to {target}'}"
-                        )
-                        break
-
-        return chunks
-
-    def _build_chunked_prompt(self, chunks: List[Dict[str, Any]], base_code: str) -> str:
-        """Build XML-chunked prompt for Generator."""
-        prompt = "<file>\n"
-        for c in chunks:
-            text = c.get("text", "")
-            if text:
-                prompt += f'<chunk id="{c["id"]}">{text}</chunk>\n'
-            else:
-                prompt += f'<chunk id="{c["id"]}" empty="true">{c.get("instruction", "")}</chunk>\n'
-        prompt += "</file>\n\nInstructions:\n"
-
-        active_mutations = 0
-        for c in chunks:
-            action = c.get("action", "KEEP")
-            if action != "KEEP":
-                active_mutations += 1
-                prompt += f'  {c["id"]}: {action} — {c.get("instruction", "apply change")}\n'
-            else:
-                prompt += f'  {c["id"]}: KEEP\n'
-
-        prompt += f"\nOutput ONLY the {active_mutations} chunk(s) that CHANGE. Skip KEEP chunks.\n"
-        prompt += "Use exactly the same chunk IDs as above.\n<file>"
-        return prompt
-
-    def _parse_chunked_output(self, raw: str) -> Dict[str, str]:
-        """Extract changed chunks from model output."""
-        import re as _re
-        modified = {}
-        for match in _re.finditer(r'<chunk id="([^"]+)"[^>]*>(.*?)</chunk>', raw, _re.DOTALL):
-            chunk_id = match.group(1)
-            new_text = match.group(2).strip()
-            if new_text:
-                modified[chunk_id] = new_text
-        return modified
-
-    def _merge_chunks(self, original_chunks: List[Dict[str, Any]], modified: Dict[str, str]) -> str:
-        """Replace modified chunks, keep unchanged, build final code."""
-        result_lines = []
-        for c in original_chunks:
-            action = c.get("action", "KEEP")
-            if action in ("ADD_METHOD", "ADD_FIELD", "ADD_CONSTANT", "ADD_ENUM"):
-                if c["id"] in modified:
-                    result_lines.append(modified[c["id"]])
-                elif c.get("text"):
-                    result_lines.append(c["text"])
-                continue
-            if action == "DELETE":
-                continue
-            if c["id"] in modified:
-                result_lines.append(modified[c["id"]])
-            else:
-                result_lines.append(c.get("text", ""))
-        return '\n'.join(line for line in result_lines if line)
-
     async def execute_orchestration(
         self, client: ClientConnection, user_code: str, user_instruction: str
     ) -> None:
+        """Main orchestration loop.
+
+        Runs 6 phases sequentially: Baseline → Strategy → Execution →
+        Validation → Adjudication → Finalization. Handles retries,
+        cancellation, and performance tracking.
+        """
         tracker = PerformanceTracker()
         await tracker.start_tracking()
 
@@ -274,20 +162,27 @@ class Orchestrator:
             state.original_complexity = self.validator.get_complexity(state.base_code)
             state.current_phase = 2
 
+            # ============================================================
+            # SECTION 3: Main Loop
+            # ============================================================
+
             while state.exit_status == ExitStatus.PROCESSING:
                 if state.current_phase == 2:
                     await self._run_phase_2(client, state)
                 elif state.current_phase == 3:
                     # Sequential on first attempt for multi-mutation plans
-                    if (self.USE_SEQUENTIAL
-                        and state.strategy_iter == 1
+                    should_use_sequential = (
+                        state.strategy_iter == 1
                         and not state.syntax_error_context
                         and state.active_plan
-                        and len(state.active_plan.get("ast_mutations", [])) > 1):
+                        and len(state.active_plan.get("ast_mutations", [])) > 1
+                    )
+                    if should_use_sequential:
                         await self._run_sequential_phase_3(client, state)
                         if state.mutation_index >= len(state.mutation_queue):
                             state.current_phase = 4
                             continue
+                        # Sequential exhausted mid-way — fall through to single-shot
                         state.working_code = state.base_code
                         state.mutation_index = 0
                         state.mutation_queue = []
@@ -322,10 +217,17 @@ class Orchestrator:
         except Exception as e:
             await tracker.stop_tracking()
             print(f"Orchestration Error: {e}")
-            await client.send_status(role=Role.System, content=f"Error: {str(e)[:200]}")
+            try:
+                await client.send_status(role=Role.System, content=f"Error: {str(e)[:200]}")
+            except Exception:
+                pass
             raise e
         finally:
             await self.agent_service.unload()
+
+    # ============================================================
+    # SECTION 4: Phase 2 — Strategy
+    # ============================================================
 
     async def _run_phase_2(
         self, client: ClientConnection, state: OrchestrationState
@@ -344,7 +246,7 @@ class Orchestrator:
 
             prompt = f"<code>{state.base_code}</code>\n<instruction>{state.user_instruction}</instruction>"
 
-            messages: List[ChatCompletionRequestMessage] = [
+            messages: list[ChatCompletionRequestMessage] = [
                 {"role": "system", "content": self.prompts["planner"]["classifier"]},
                 {"role": "user", "content": prompt},
             ]
@@ -417,7 +319,7 @@ class Orchestrator:
                 analysis_text, ArchitectAnalysisResponse
             )
             state.architect_analysis = analysis_model.model_dump()
-        except Exception:
+        except (ValidationError, ValueError, json.JSONDecodeError):
             state.architect_analysis = {}
 
         await self._notify(
@@ -465,21 +367,22 @@ class Orchestrator:
                     check_repetition=detect_repetition,
                 )
                 arch_text = raw["choices"][0]["message"].get("content") or ""
-                header = f"--- Planner Architect Output ---"
+                header = "--- Planner Architect Output ---"
                 if _attempt > 0:
                     header = f"--- Planner Architect Output (Retry {_attempt}) ---"
                 print(f"\n{header}\n{arch_text}\n------------------------------")
                 architect_res = ResponseParser.extract_json(arch_text, ASTArchitectResponse)
                 state.active_plan = architect_res.ast_modification_plan.model_dump()
                 break
-            except (ValidationError, ValueError) as e:
+            except (ValidationError, ValueError):
                 if _attempt == 0:
-                    print(f"  Architect attempt 1 failed. Retrying with temp=0.5...")
+                    print("  Architect attempt 1 failed. Retrying with temp=0.5...")
                     await self.agent_service.clear_context()
                 else:
                     raise
 
         # Enrich plan with concrete mutation details from code analysis
+        assert state.active_plan is not None
         intent_key = state.intent_packet.get("specific_intent", "") if state.intent_packet else None
         target_method = state.intent_packet.get("scope_anchor", {}).get("member", "") if state.intent_packet else None
         enriched = ASTMatcher.enrich_mutations(
@@ -513,6 +416,10 @@ class Orchestrator:
 
         state.current_phase = 3
 
+    # ============================================================
+    # SECTION 5: Phase 3 — Execution
+    # ============================================================
+
     async def _run_phase_3(
         self, client: ClientConnection, state: OrchestrationState
     ) -> None:
@@ -543,7 +450,7 @@ class Orchestrator:
             if guidance:
                 system_content += "\n" + guidance
 
-        messages: List[ChatCompletionRequestMessage] = [
+        messages: list[ChatCompletionRequestMessage] = [
             {"role": "system", "content": system_content},
             {"role": "user", "content": coder_prompt},
         ]
@@ -553,7 +460,7 @@ class Orchestrator:
         gen_max_tokens = 3072
 
         # Multi-sample generation — try 3 temperatures, pick best
-        samples = []
+        samples: list[dict[str, Any]] = []
         for sample_temp in (retry_temp, 0.3, 0.5) if not state.syntax_error_context else (retry_temp,):
             raw = await self.agent_service.generate(
                 messages, temp=sample_temp, max_tokens=gen_max_tokens
@@ -566,11 +473,10 @@ class Orchestrator:
                 # Quick syntax check
                 syntax_ok = False
                 try:
-                    import javalang
                     wrapped = f"class _W_ {{ {sample_code} }}" if "class" not in sample_code else sample_code
                     javalang.parse.parse(wrapped)
                     syntax_ok = True
-                except Exception:
+                except (javalang.parser.JavaSyntaxError, javalang.tokenizer.LexerError):
                     pass
                 cc = self.validator.get_complexity(sample_code) if syntax_ok else 999
                 samples.append({
@@ -651,12 +557,20 @@ class Orchestrator:
             state.syntax_iter = 0
             state.current_phase = 2
 
+    # --- Sequential Phase 3 (one mutation at a time) ---
+
     async def _run_sequential_phase_3(
         self, client: ClientConnection, state: OrchestrationState
     ) -> None:
-        """Apply mutations one at a time. Full class context, single target."""
+        """Apply mutations one at a time in sequence.
+
+        Used for multi-mutation plans on first iteration. Each mutation
+        is sent to the generator individually with the current code.
+        Falls back to single-shot generation if this stalls.
+        """
         import time as _time
 
+        assert state.active_plan is not None
         mutations = self._order_mutations(
             state.active_plan.get("ast_mutations", [])
         )
@@ -717,7 +631,7 @@ class Orchestrator:
                 f"Do NOT change anything except this mutation."
             )
 
-            messages: List[ChatCompletionRequestMessage] = [
+            messages: list[ChatCompletionRequestMessage] = [
                 {"role": "system", "content": system_content},
                 {"role": "user", "content": user_prompt},
             ]
@@ -819,6 +733,10 @@ class Orchestrator:
             client, Role.Generator,
             f"All {len(state.mutation_queue)} mutations applied. Total gen time: {total_time}ms"
         )
+
+    # ============================================================
+    # SECTION 6: Phase 4 — Validation
+    # ============================================================
 
     async def _run_phase_4(
         self, client: ClientConnection, state: OrchestrationState
@@ -1002,7 +920,7 @@ class Orchestrator:
                 await self._notify(
                     client,
                     Role.Validator,
-                    f"Routing to Generator for targeted fix...",
+                    "Routing to Generator for targeted fix...",
                 )
                 state.current_phase = 3
                 return
@@ -1068,6 +986,10 @@ class Orchestrator:
                     return inner
         return code
 
+    # ============================================================
+    # SECTION 7: Phase 5 — Audit (Judge)
+    # ============================================================
+
     async def _run_phase_5(
         self, client: ClientConnection, state: OrchestrationState
     ) -> None:
@@ -1106,7 +1028,7 @@ class Orchestrator:
 
         plan_summary = f"Intent: {intent}. Target: {target_class}.{target_method}."
         mutations_list = (
-            f"Mutations: {', '.join(f'{a}({t})' for a, t in zip(mutation_actions, mutation_targets))}"
+            f"Mutations: {', '.join(f'{a}({t})' for a, t in zip(mutation_actions, mutation_targets, strict=False))}"
             if mutation_actions
             else "Mutations: none"
         )
@@ -1125,7 +1047,7 @@ class Orchestrator:
             if guidance:
                 system_content += "\n" + guidance
 
-        messages: List[ChatCompletionRequestMessage] = [
+        messages: list[ChatCompletionRequestMessage] = [
             {"role": "system", "content": system_content},
             {"role": "user", "content": audit_prompt},
         ]
@@ -1141,7 +1063,7 @@ class Orchestrator:
                     response_model=StructuralAuditorResponse,
                 )
                 audit_text = raw["choices"][0]["message"].get("content") or ""
-                jheader = f"--- Judge Auditor Output ---"
+                jheader = "--- Judge Auditor Output ---"
                 if _jattempt > 0:
                     jheader = f"--- Judge Auditor Output (Retry {_jattempt}) ---"
                 print(
@@ -1149,9 +1071,9 @@ class Orchestrator:
                 )
                 audit_res = ResponseParser.extract_json(audit_text, StructuralAuditorResponse)
                 break
-            except (ValidationError, ValueError) as e:
+            except (ValidationError, ValueError):
                 if _jattempt == 0:
-                    print(f"  Judge attempt 1 failed (truncated). Retrying with temp=0.3, max_tokens=2048...")
+                    print("  Judge attempt 1 failed (truncated). Retrying with temp=0.3, max_tokens=2048...")
                     await self.agent_service.clear_context()
                 else:
                     raise
@@ -1186,11 +1108,15 @@ class Orchestrator:
                 state.strategy_iter_incremented = True
             state.current_phase = 2
 
+    # ============================================================
+    # SECTION 8: Phase 6 — Finalization
+    # ============================================================
+
     async def _run_phase_6(
         self,
         client: ClientConnection,
         state: OrchestrationState,
-        metrics: Dict[str, Any],
+        metrics: dict[str, Any],
     ) -> None:
         """Phase 6: Finalization & Reporting."""
         # Strip outer wrapper from working_code for final output
@@ -1217,6 +1143,7 @@ class Orchestrator:
             original_complexity=state.original_complexity,
             refactored_complexity=self.validator.get_complexity(final_code),
             performance_metrics=metrics,
+            exit_status=state.exit_status.value,
             planner_model=self.model_config["planner"].get("name"),
             generator_model=self.model_config["generator"].get("name"),
             judge_model=self.model_config["judge"].get("name"),
@@ -1264,6 +1191,10 @@ class Orchestrator:
             judge_model=self.model_config["judge"].get("name"),
         )
 
+    # ============================================================
+    # SECTION 9: Helpers
+    # ============================================================
+
     async def generate_insights(
         self,
         user_code: str,
@@ -1271,6 +1202,7 @@ class Orchestrator:
         original_complexity: int,
         refactored_complexity: int,
     ) -> Any:
+        """Generate refactoring insights using the Judge model."""
         await self.agent_service.swap(self.model_config["judge"])
 
         prompt: str = (
@@ -1279,7 +1211,7 @@ class Orchestrator:
             f"Original Complexity: {original_complexity}\n"
             f"Refactored Complexity: {refactored_complexity}\n"
         )
-        messages: List[ChatCompletionRequestMessage] = [
+        messages: list[ChatCompletionRequestMessage] = [
             {
                 "role": "system",
                 "content": self.prompts["judge"]["insights"],
@@ -1301,13 +1233,14 @@ class Orchestrator:
         try:
             insights_res = ResponseParser.extract_json(text, RefactorInsightsResponse)
             return [i.model_dump() for i in insights_res.insights]
-        except Exception as e:
+        except (ValidationError, ValueError, json.JSONDecodeError) as e:
             print(f"Failed to parse insights JSON: {e}")
             return text.strip()
 
     @staticmethod
     def _get_cc_rule(intent: RefactorIntent) -> str:
-        rules: Dict[RefactorIntent, str] = {
+        """Returns the CC rule for an intent: STRICT, LOOSENED, SKIP, or EXTRACT_RULE."""
+        rules: dict[RefactorIntent, str] = {
             RefactorIntent.FLATTEN_CONDITIONAL: "LOOSENED",
             RefactorIntent.DECOMPOSE_CONDITIONAL: "STRICT",
             RefactorIntent.CONSOLIDATE_CONDITIONAL: "STRICT",
@@ -1374,55 +1307,13 @@ class Orchestrator:
 
         return result
 
-    async def _run_chunked_phase_3(
-        self, client: ClientConnection, state: OrchestrationState
-    ) -> None:
-        """Phase 3 via chunk-based editing — only modified chunks go to Generator."""
-        await self._notify(client, Role.Generator, "Ph3: Chunk-based editing...", phase=3)
-        await self.agent_service.swap(self.model_config["generator"])
-        await self.agent_service.clear_context()
-
-        chunks = self._chunkify(state.base_code)
-        chunks = self._map_plan_to_chunks(state.active_plan or {}, chunks)
-        prompt = self._build_chunked_prompt(chunks, state.base_code)
-
-        system = self.prompts["generator"]["coder_guidance"].get(
-            "CHUNK_EDITOR",
-            self.prompts["generator"]["coder"]
-        )
-
-        messages: List[ChatCompletionRequestMessage] = [
-            {"role": "system", "content": system},
-            {"role": "user", "content": prompt},
-        ]
-
-        raw = await self.agent_service.generate(messages, temp=0.1, max_tokens=3072)
-        coder_text = raw["choices"][0]["message"].get("content") or ""
-        print(f"\n--- Chunk Editor Output ---\n{coder_text}\n-------------------------")
-
-        modified = self._parse_chunked_output(coder_text)
-        if modified:
-            working_code = self._merge_chunks(chunks, modified)
-            state.working_code = working_code
-            state.syntax_iter = 0
-            state.syntax_error_context = None
-            await self._notify(
-                client, Role.Generator,
-                f"Chunk editing complete ({len(modified)} chunks modified).",
-                content=working_code
-            )
-            print(working_code)
-        else:
-            # No chunks parsed — keep original as fallback
-            state.working_code = state.base_code
-
     async def _notify(
         self,
         client: ClientConnection,
         role: Role,
         message: str,
-        content: Optional[str] = None,
-        phase: Optional[int] = None,
+        content: str | None = None,
+        phase: int | None = None,
         outer_loop: int = 0,
         inner_loop: int = 0,
     ) -> None:

@@ -1,5 +1,7 @@
 # Isolated Model Reasoning Test Suite — Design Spec
 
+> **Note**: As of June 2026, `test_results/` moved to `tests/results/`. All historical references to `test_results/` in this document remain accurate for the time period described.
+
 **Date:** 2025-05-25  
 **Status:** Design approved  
 **Goal:** Test each model role (Planner, Judge, Generator) in isolation to measure reasoning capability, identify limitations, and establish baseline metrics independent of the orchestration pipeline.

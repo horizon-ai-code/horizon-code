@@ -1,5 +1,7 @@
 # Isolated Model Test Results — Harness Fix Report
 
+> **Note**: As of June 2026, `test_results/` moved to `tests/results/`. All historical references to `test_results/` in this document remain accurate for the time period described.
+
 **Date:** 2026-05-28  
 **Status:** Harness bugs fixed, tests rerun  
 **Scope:** Planner (45 calls), Judge (50 calls), Generator (14 calls)  

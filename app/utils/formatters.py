@@ -1,8 +1,8 @@
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
-def format_plan_for_generator(plan: Dict[str, Any], base_code: str) -> str:
+def format_plan_for_generator(plan: dict[str, Any], base_code: str) -> str:
     """
     Converts a JSON AST modification plan into linear text instructions
     for the Generator model. Easier for 3B models to parse than nested JSON.
@@ -14,7 +14,7 @@ def format_plan_for_generator(plan: Dict[str, Any], base_code: str) -> str:
             f"No mutations to apply. Return the code unchanged."
         )
 
-    instructions: List[str] = [
+    instructions: list[str] = [
         f"Base Code:\n<code>{base_code}</code>\n",
         f"Instructions — apply in order ({len(mutations)} total):",
     ]
@@ -80,7 +80,7 @@ def format_plan_for_generator(plan: Dict[str, Any], base_code: str) -> str:
     return "\n".join(instructions)
 
 
-def format_agent_output(message: str, content: Optional[str]) -> str:
+def format_agent_output(message: str, content: str | None) -> str:
     """
     Parses structured JSON content from agents and formats it into
     human-readable Markdown. Returns the original message if no content
@@ -91,7 +91,7 @@ def format_agent_output(message: str, content: Optional[str]) -> str:
 
     try:
         data = json.loads(content)
-    except Exception:
+    except (json.JSONDecodeError, TypeError):
         return message  # Fallback to just the message if not JSON
 
     formatted_md = ""
@@ -100,7 +100,7 @@ def format_agent_output(message: str, content: Optional[str]) -> str:
     if isinstance(data, dict) and "specific_intent" in data and "refactor_category" in data:
         formatted_md = f"**Category:** `{data.get('refactor_category')}`\n"
         formatted_md += f"**Intent:** `{data.get('specific_intent')}`\n"
-        
+
         anchor = data.get("scope_anchor", {})
         if anchor:
             formatted_md += f"**Target Unit:** `{anchor.get('unit_type')}`\n"
@@ -172,5 +172,5 @@ def format_agent_output(message: str, content: Optional[str]) -> str:
 
     if formatted_md:
         return f"{message}\n\n{formatted_md}"
-    
+
     return message

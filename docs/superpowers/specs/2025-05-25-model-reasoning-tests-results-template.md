@@ -1,5 +1,7 @@
 # Model Reasoning Test Results — Template
 
+> **Note**: As of June 2026, `test_results/` moved to `tests/results/`. All historical references to `test_results/` in this document remain accurate for the time period described.
+
 Each test script (`test_planner_isolated.py`, `test_judge_isolated.py`, `test_generator_isolated.py`) MUST produce a report following this template. Reports go to `test_results/`.
 
 ---

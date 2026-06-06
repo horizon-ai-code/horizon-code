@@ -1,12 +1,12 @@
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-from app.utils.types import RefactorIntent
+import javalang
 
 
 class ASTMatcher:
     """Computes concrete mutation details from original code + plan context.
-    
+
     The Planner produces abstract mutations (action + target). This module
     enriches them with exact find_text/replace_text and insert_after by
     analyzing the original Java code with javalang.
@@ -15,10 +15,10 @@ class ASTMatcher:
     @staticmethod
     def enrich_mutations(
         code: str,
-        mutations: List[Dict[str, Any]],
-        intent: Optional[str] = None,
-        target_method: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
+        mutations: list[dict[str, Any]],
+        intent: str | None = None,
+        target_method: str | None = None,
+    ) -> list[dict[str, Any]]:
         for m in mutations:
             action = m.get("action", "")
             target = m.get("target", "")
@@ -44,7 +44,7 @@ class ASTMatcher:
         return mutations
 
     @staticmethod
-    def _find_class_declaration_line(code: str) -> Optional[str]:
+    def _find_class_declaration_line(code: str) -> str | None:
         """Find the first class/enum/interface declaration line (anchor for insert_after)."""
         lines = code.split('\n')
         for line in lines:
@@ -55,23 +55,21 @@ class ASTMatcher:
         return None
 
     @staticmethod
-    def _find_method_body(code: str, method_name: str) -> Optional[str]:
+    def _find_method_body(code: str, method_name: str) -> str | None:
         """Find a method body by name, return the full method declaration."""
-        import javalang
         try:
             wrapped = f"class _W_ {{ {code} }}" if "class" not in code[:100] else code
             tree = javalang.parse.parse(wrapped)
-            _, body = tree
-            for path, node in body:
+            for _path, node in tree:
                 if isinstance(node, javalang.tree.MethodDeclaration):
                     if node.name == method_name:
                         return ASTMatcher._extract_method_text(code, method_name)
-        except Exception:
+        except (javalang.parser.JavaSyntaxError, javalang.tokenizer.LexerError, ValueError):
             pass
         return None
 
     @staticmethod
-    def _extract_method_text(code: str, method_name: str) -> Optional[str]:
+    def _extract_method_text(code: str, method_name: str) -> str | None:
         """Extract method declaration text from source code using simple line matching."""
         lines = code.split('\n')
         start_idx = -1
@@ -93,7 +91,7 @@ class ASTMatcher:
         return None
 
     @staticmethod
-    def _find_literal_in_code(code: str, literal: str, method_name: Optional[str] = None) -> bool:
+    def _find_literal_in_code(code: str, literal: str, method_name: str | None = None) -> bool:
         """Check if a literal value appears in the code (optionally within a specific method)."""
         if method_name:
             method_text = ASTMatcher._find_method_body(code, method_name)
@@ -105,13 +103,13 @@ class ASTMatcher:
     @staticmethod
     def _enrich_add_constant(
         code: str,
-        details: Dict[str, Any],
+        details: dict[str, Any],
         target: str,
         body: str,
-        target_method: Optional[str],
+        target_method: str | None,
     ) -> None:
         """Enrich ADD_CONSTANT with insert_after and find/replace.
-        
+
         The planner provides 'value' (the literal). The matcher:
         - Sets insert_after to class declaration
         - Uses value + target as find/replace when MODIFY_METHOD references them
@@ -124,7 +122,7 @@ class ASTMatcher:
     @staticmethod
     def _enrich_add_field(
         code: str,
-        details: Dict[str, Any],
+        details: dict[str, Any],
         target: str,
         body: str,
     ) -> None:
@@ -137,7 +135,7 @@ class ASTMatcher:
     @staticmethod
     def _enrich_add_method(
         code: str,
-        details: Dict[str, Any],
+        details: dict[str, Any],
         target: str,
         body: str,
     ) -> None:
@@ -150,14 +148,14 @@ class ASTMatcher:
     @staticmethod
     def _enrich_modify_method(
         code: str,
-        details: Dict[str, Any],
+        details: dict[str, Any],
         target: str,
         body: str,
-        intent: Optional[str],
-        all_mutations: List[Dict[str, Any]],
+        intent: str | None,
+        all_mutations: list[dict[str, Any]],
     ) -> None:
         """Enrich MODIFY_METHOD with find_text/replace_text.
-        
+
         For EXTRACT_CONSTANT: uses ADD_CONSTANT mutations' value + target
         to create find/replace pairs.
         """
@@ -177,12 +175,12 @@ class ASTMatcher:
     @staticmethod
     def _enrich_rename_symbol(
         code: str,
-        details: Dict[str, Any],
+        details: dict[str, Any],
         target: str,
         body: str,
     ) -> None:
         """Enrich RENAME_SYMBOL with find_text/replace_text.
-        
+
         Parses body_abstract like 'Rename m to rowCount' for the new name.
         find_text is the old name (mutation target).
         """
