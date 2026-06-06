@@ -13,7 +13,7 @@ sys.path.insert(0, ".")
 
 from app.utils.response_parser import ResponseParser
 from app.utils.schemas import StructuralAuditorResponse
-from tests.model_tests.harness import ModelTestHarness
+from tests.model.harness import ModelTestHarness
 
 
 # ============================================================
@@ -665,7 +665,7 @@ async def main():
               f"defs={defs_c['correct']}/{defs_c['total']} icl={icl_c['correct']}/{icl_c['total']}")
 
     ts = datetime.now().strftime("%Y-%m-%dT%H%M%S")
-    path = f"test_results/judge_comparison_{ts}.json"
+    path = f"tests/results/judge_comparison_{ts}.json"
     with open(path, "w") as f:
         json.dump(all_results, f, indent=2, default=str)
     print(f"\nSaved: {path}")

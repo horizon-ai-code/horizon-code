@@ -10,7 +10,7 @@ sys.path.insert(0, ".")
 
 from app.utils.response_parser import ResponseParser
 from app.utils.schemas import IntentClassifierResponse
-from tests.model_tests.harness import ModelTestHarness
+from tests.model.harness import ModelTestHarness
 
 
 TEST_CASES: List[Dict[str, Any]] = [
@@ -166,7 +166,7 @@ async def main():
     print(f"\nRESULT: {correct}/{len(results)} correct")
 
     ts = datetime.now().strftime("%Y-%m-%dT%H%M%S")
-    path = f"test_results/classifier_new_{ts}.json"
+    path = f"tests/results/classifier_new_{ts}.json"
     with open(path, "w") as f:
         json.dump(results, f, indent=2, default=str)
     print(f"Saved: {path}")

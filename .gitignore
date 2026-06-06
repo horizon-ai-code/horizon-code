@@ -12,4 +12,11 @@ GEMINI.md
 
 .agents
 
-test_results/
+tests/results/
+.coverage
+
+.opencode/
+
+session_status.md
+
+tests/model_tests/

@@ -10,7 +10,7 @@ import javalang
 
 from app.modules.validator import ASTWalker
 from app.utils.response_parser import ResponseParser
-from tests.model_tests.harness import ModelTestHarness
+from tests.model.harness import ModelTestHarness
 
 
 TEST_CASES: List[Dict[str, Any]] = [
@@ -792,7 +792,7 @@ async def main():
 
     json_path = harness.save_results(results, "generator")
     report = harness.build_generator_report(results)
-    report_path = "test_results/generator_isolated_report.md"
+    report_path = "tests/results/generator_isolated_report.md"
     with open(report_path, "w") as f:
         f.write(report)
 

@@ -226,22 +226,22 @@ class ModelTestHarness:
         return hallucinations
 
     def save_results(self, results: List[Dict], role: str) -> str:
-        path = f"test_results/{role}_isolated_results.json"
+        path = f"tests/results/{role}_isolated_results.json"
         with open(path, "w") as f:
             json.dump(results, f, indent=2, default=str)
         return path
 
     @staticmethod
     def build_planner_report(results: List[Dict]) -> str:
-        from tests.model_tests.report_templates import build_report
+        from tests.model.report_templates import build_report
         return build_report("planner", results)
 
     @staticmethod
     def build_judge_report(results: List[Dict]) -> str:
-        from tests.model_tests.report_templates import build_report
+        from tests.model.report_templates import build_report
         return build_report("judge", results)
 
     @staticmethod
     def build_generator_report(results: List[Dict]) -> str:
-        from tests.model_tests.report_templates import build_report
+        from tests.model.report_templates import build_report
         return build_report("generator", results)

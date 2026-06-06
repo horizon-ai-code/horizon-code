@@ -7,7 +7,7 @@ sys.path.insert(0, ".")
 
 from app.utils.response_parser import ResponseParser
 from app.utils.schemas import StructuralAuditorResponse
-from tests.model_tests.harness import ModelTestHarness
+from tests.model.harness import ModelTestHarness
 
 
 TEST_CASES: List[Dict[str, Any]] = [
@@ -393,7 +393,7 @@ async def main():
 
     json_path = harness.save_results(results, "judge")
     report = harness.build_judge_report(results)
-    report_path = "test_results/judge_isolated_report.md"
+    report_path = "tests/results/judge_isolated_report.md"
     with open(report_path, "w") as f:
         f.write(report)
 

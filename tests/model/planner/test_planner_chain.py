@@ -13,7 +13,7 @@ from app.utils.schemas import (
     ASTArchitectResponse,
     IntentClassifierResponse,
 )
-from tests.model_tests.harness import ModelTestHarness
+from tests.model.harness import ModelTestHarness
 
 
 TEST_CASES: List[Dict[str, Any]] = [
@@ -261,7 +261,7 @@ async def main():
     print(f"\nRESULT: {classifier_ok}/{len(results)} classifier correct | {plans_with_mutations}/{len(results)} plans have mutations | {coherent}/{len(results)} chain coherent")
 
     ts = datetime.now().strftime("%Y-%m-%dT%H%M%S")
-    path = f"test_results/planner_chain_new_{ts}.json"
+    path = f"tests/results/planner_chain_new_{ts}.json"
     with open(path, "w") as f:
         json.dump(results, f, indent=2, default=str)
     print(f"Saved: {path}")

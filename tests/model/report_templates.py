@@ -155,7 +155,7 @@ def _build_planner_report(results: List[Dict]) -> str:
             "",
             "## Raw Data",
             "",
-            f"Full results as JSON saved to: `test_results/planner_isolated_results.json`",
+            f"Full results as JSON saved to: `tests/results/planner_isolated_results.json`",
         ]
     )
 
@@ -357,7 +357,7 @@ def _build_judge_report(results: List[Dict]) -> str:
             "",
             "## Raw Data",
             "",
-            f"Full results as JSON saved to: `test_results/judge_isolated_results.json`",
+            f"Full results as JSON saved to: `tests/results/judge_isolated_results.json`",
         ]
     )
 
@@ -509,7 +509,7 @@ def _build_generator_report(results: List[Dict]) -> str:
             "",
             "## Raw Data",
             "",
-            f"Full results as JSON saved to: `test_results/generator_isolated_results.json`",
+            f"Full results as JSON saved to: `tests/results/generator_isolated_results.json`",
         ]
     )
 

@@ -1,10 +1,10 @@
 import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import peewee
 from playhouse.shortcuts import model_to_dict
 
-from app.utils.paths import DB_DIR, DB_PATH
+from app.utils.paths import DB_PATH
 
 # 1. Initialize the SQLite database connection
 db = peewee.SqliteDatabase(DB_PATH, pragmas={"journal_mode": "wal", "foreign_keys": 1})
@@ -121,12 +121,12 @@ class DatabaseManager:
             )
 
     def log_status(
-        self, 
-        session_id: str, 
-        role: str, 
-        status: str, 
-        content: Optional[str] = None,
-        phase: Optional[int] = None,
+        self,
+        session_id: str,
+        role: str,
+        status: str,
+        content: str | None = None,
+        phase: int | None = None,
         outer_loop: int = 0,
         inner_loop: int = 0
     ) -> None:
@@ -154,17 +154,17 @@ class DatabaseManager:
         id: str,
         refactored_code: str,
         insights: str,
-        original_complexity: Optional[int],
-        refactored_complexity: Optional[int],
-        performance_metrics: Dict[str, float],
+        original_complexity: int | None,
+        refactored_complexity: int | None,
+        performance_metrics: dict[str, float],
         exit_status: str = "SUCCESS",
-        final_intent: Optional[str] = None,
-        final_plan: Optional[str] = None,
+        final_intent: str | None = None,
+        final_plan: str | None = None,
         outer_loops: int = 0,
         inner_loops: int = 0,
-        planner_model: Optional[str] = None,
-        generator_model: Optional[str] = None,
-        judge_model: Optional[str] = None,
+        planner_model: str | None = None,
+        generator_model: str | None = None,
+        judge_model: str | None = None,
     ) -> None:
         """Updates an existing session record with final results."""
         with db.atomic():
@@ -189,12 +189,12 @@ class DatabaseManager:
             ).where(RefactorHistory.id == id)
             query.execute()
 
-    def get_history(self) -> List[Dict[str, Any]]:
+    def get_history(self) -> list[dict[str, Any]]:
         """Fetches all history stubs."""
         query = RefactorHistory.select().order_by(RefactorHistory.created_at.desc())
         return [model_to_dict(h) for h in query]
 
-    def get_history_by_id(self, id: str) -> Optional[Dict[str, Any]]:
+    def get_history_by_id(self, id: str) -> dict[str, Any] | None:
         """Fetches detailed history for a session."""
         try:
             h = RefactorHistory.get(RefactorHistory.id == id)

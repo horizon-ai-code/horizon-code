@@ -1,5 +1,7 @@
 # Session Summary — 2025-05-25
 
+> **Note**: As of June 2026, `test_results/` moved to `tests/results/`. All historical references to `test_results/` in this document remain accurate for the time period described.
+
 ## Sub-Step Decomposition + Prompt Hardening
 
 **Branch:** `feat/substep-decomposition` (13 commits on top of `develop`)

@@ -38,6 +38,7 @@ class TestConnectionManager(unittest.IsolatedAsyncioTestCase):
             "type": "result",
             "id": self.client_connection.id,
             "code": "code",
+            "exit_status": "SUCCESS",
             "original_complexity": 10,
             "refactored_complexity": 5,
             "performance": {},

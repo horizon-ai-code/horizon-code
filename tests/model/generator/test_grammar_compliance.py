@@ -19,7 +19,7 @@ from app.utils.schemas import (
     IntentClassifierResponse,
     StructuralAuditorResponse,
 )
-from tests.model_tests.harness import ModelTestHarness
+from tests.model.harness import ModelTestHarness
 
 
 TEST_CASES = [
@@ -319,7 +319,7 @@ async def main():
         "planner_results": planner_results,
         "judge_results": judge_results,
     }
-    path = f"test_results/grammar_compliance_{timestamp}.json"
+    path = f"tests/results/grammar_compliance_{timestamp}.json"
     with open(path, "w") as f:
         json.dump(output, f, indent=2, default=str)
     print(f"\nSaved: {path}")

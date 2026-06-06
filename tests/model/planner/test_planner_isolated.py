@@ -11,7 +11,7 @@ sys.path.insert(0, ".")
 import javalang
 
 from app.utils.types import RefactorIntent
-from tests.model_tests.harness import ModelTestHarness
+from tests.model.harness import ModelTestHarness
 
 
 TEST_CASES: List[Dict[str, Any]] = [
@@ -620,7 +620,7 @@ async def main():
     json_path = harness.save_results(results, "planner")
 
     report = harness.build_planner_report(results)
-    report_path = "test_results/planner_isolated_report.md"
+    report_path = "tests/results/planner_isolated_report.md"
     with open(report_path, "w") as f:
         f.write(report)
 
