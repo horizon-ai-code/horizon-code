@@ -202,6 +202,20 @@ class DatabaseManager:
         except RefactorHistory.DoesNotExist:
             return None
 
+    def cleanup_zombie_sessions(self, max_age_hours: int = 1) -> int:
+        """Marks sessions stuck in 'Processing' for >max_age_hours as 'Zombie'."""
+        cutoff = datetime.datetime.now() - datetime.timedelta(hours=max_age_hours)
+        with db.atomic():
+            query = (
+                RefactorHistory
+                .update(status="Zombie", exit_status="ABORT_SYSTEM")
+                .where(
+                    (RefactorHistory.status == "Processing") &
+                    (RefactorHistory.created_at < cutoff)
+                )
+            )
+            return query.execute()
+
     def delete_history_by_id(self, id: str) -> bool:
         """
         Deletes a history record and its associated logs.

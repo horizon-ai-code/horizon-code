@@ -63,5 +63,35 @@ class TestOrchestratorHalt(unittest.IsolatedAsyncioTestCase):
         self.client.send_status.assert_any_call(role=Role.System, content="Error: Fatal Error")
         self.agent_service.unload.assert_called_once()
 
+    async def test_cleanup_zombie_sessions(self):
+        """Sessions stuck in Processing get marked as Zombie after timeout."""
+        from datetime import datetime, timedelta
+        from app.modules.context_manager import DatabaseManager, RefactorHistory, db as test_db
+        import uuid
+
+        mgr = DatabaseManager()
+        zombie_id = str(uuid.uuid4())
+        with test_db.atomic():
+            RefactorHistory.create(
+                id=zombie_id,
+                status="Processing",
+                user_instruction="zombie",
+                original_code="class A {}",
+                created_at=datetime.now() - timedelta(days=1),
+            )
+
+        try:
+            cleaned = mgr.cleanup_zombie_sessions(max_age_hours=1)
+            assert cleaned >= 1, f"Expected >=1 cleaned, got {cleaned}"
+            record = RefactorHistory.get(RefactorHistory.id == zombie_id)
+            assert record.status == "Zombie", f"Expected Zombie, got {record.status}"
+            assert record.exit_status == "ABORT_SYSTEM"
+        finally:
+            try:
+                record = RefactorHistory.get(RefactorHistory.id == zombie_id)
+                record.delete_instance()
+            except RefactorHistory.DoesNotExist:
+                pass
+
 if __name__ == "__main__":
     unittest.main()

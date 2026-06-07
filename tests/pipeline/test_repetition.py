@@ -97,6 +97,9 @@ class MockClient:
         self.statuses = []
         self.results = None
         self.log = []
+    @property
+    def is_stale(self) -> bool:
+        return False
     async def send_status(self, role, content, phase=None, **kw):
         self.statuses.append((str(role)[:50], str(content)[:200]))
     async def send_result(self, **kw):

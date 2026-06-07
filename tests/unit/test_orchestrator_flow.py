@@ -17,6 +17,10 @@ class MockClient:
         self.results = None
         self.insights = None
 
+    @property
+    def is_stale(self) -> bool:
+        return False
+
     async def send_status(self, role, content):
         self.statuses.append((role, content))
 
@@ -95,7 +99,9 @@ class TestOrchestratorFlow(unittest.IsolatedAsyncioTestCase):
                     "ast_modification_plan": {"target_class": "A", "ast_mutations": []},
                 }
             ),
-            # Ph3: Coder
+            # Ph3: Coder (multi-sample: 3 temps)
+            "<code>public class A { void m() { } }</code>",
+            "<code>public class A { void m() { } }</code>",
             "<code>public class A { void m() { } }</code>",
             # Ph5: Auditor
             json.dumps(
@@ -182,6 +188,8 @@ class TestOrchestratorFlow(unittest.IsolatedAsyncioTestCase):
                     },
                 }),
                 "<code>public class A { void m() { if(!a) throw new IllegalArgumentException(); doWork(); } }</code>",
+                "<code>public class A { void m() { if(!a) throw new IllegalArgumentException(); doWork(); } }</code>",
+                "<code>public class A { void m() { if(!a) throw new IllegalArgumentException(); doWork(); } }</code>",
                 json.dumps({
                     "audit_scratchpad": {"variable_trace": [], "logic_comparison": "ok"},
                     "verdict": "ACCEPT",
@@ -241,6 +249,8 @@ class TestOrchestratorFlow(unittest.IsolatedAsyncioTestCase):
                     },
                 }),
                 "<code>public class OrderProcessor { public void processOrder() { if(!x) return; if(!y) return; doWork(); } }</code>",
+                "<code>public class OrderProcessor { public void processOrder() { if(!x) return; if(!y) return; doWork(); } }</code>",
+                "<code>public class OrderProcessor { public void processOrder() { if(!x) return; if(!y) return; doWork(); } }</code>",
                 json.dumps({
                     "audit_scratchpad": {"variable_trace": [], "logic_comparison": "ok"},
                     "verdict": "ACCEPT",
@@ -272,6 +282,94 @@ class TestOrchestratorFlow(unittest.IsolatedAsyncioTestCase):
             self.assertIn("OrderProcessor.processOrder", captured_prompt)
             self.assertIn("MODIFY_METHOD", captured_prompt)
             self.assertIn("Mutations:", captured_prompt)
+
+    async def test_judge_double_failure_graceful(self):
+        """When judge fails twice, orchestrator loops back to Phase 2 instead of crashing."""
+        mock_yaml = MagicMock()
+        mock_yaml.side_effect = [self.mock_config, self.mock_prompts]
+        mock_open = MagicMock()
+
+        with patch("builtins.open", mock_open), patch("yaml.safe_load", mock_yaml):
+            orch = Orchestrator(self.agent_service, self.validator, self.db)
+
+            responses = [
+                json.dumps({
+                    "classification_scratchpad": "t",
+                    "intent_packet": {
+                        "refactor_category": "CONTROL_FLOW",
+                        "specific_intent": "FLATTEN_CONDITIONAL",
+                        "scope_anchor": {"class": "A", "member": "m", "unit_type": "METHOD_UNIT"},
+                    },
+                }),
+                json.dumps({
+                    "analysis_scratchpad": "t",
+                    "primary_targets": ["m"],
+                    "secondary_targets": [],
+                    "new_structures_needed": [],
+                    "must_preserve": [],
+                }),
+                json.dumps({
+                    "architect_scratchpad": "t",
+                    "ast_modification_plan": {"target_class": "A", "ast_mutations": []},
+                }),
+                # Ph3: Coder (3 temps)
+                "<code>public class A { void m() { } }</code>",
+                "<code>public class A { void m() { } }</code>",
+                "<code>public class A { void m() { } }</code>",
+                # Ph5: Judge fails twice
+                "NOT VALID JSON",
+                "ALSO NOT VALID",
+                # Ph2 retry: Classifier
+                json.dumps({
+                    "classification_scratchpad": "retry",
+                    "intent_packet": {
+                        "refactor_category": "CONTROL_FLOW",
+                        "specific_intent": "FLATTEN_CONDITIONAL",
+                        "scope_anchor": {"class": "A", "member": "m", "unit_type": "METHOD_UNIT"},
+                    },
+                }),
+                # Ph2 retry: Architect Analysis
+                json.dumps({
+                    "analysis_scratchpad": "t",
+                    "primary_targets": ["m"],
+                    "secondary_targets": [],
+                    "new_structures_needed": [],
+                    "must_preserve": [],
+                }),
+                # Ph2 retry: Architect
+                json.dumps({
+                    "architect_scratchpad": "t",
+                    "ast_modification_plan": {"target_class": "A", "ast_mutations": []},
+                }),
+                # Ph3 retry: Coder (3 temps)
+                "<code>public class A { void m() { } }</code>",
+                "<code>public class A { void m() { } }</code>",
+                "<code>public class A { void m() { } }</code>",
+                # Ph5 retry: Judge succeeds
+                json.dumps({
+                    "audit_scratchpad": {"variable_trace": [], "logic_comparison": "ok"},
+                    "verdict": "ACCEPT",
+                    "issues": [],
+                }),
+                # Ph6: Insights
+                json.dumps({"insights": [{"title": "Test", "details": "Recovered."}]}),
+            ]
+
+            async def mock_gen(messages, **kwargs):
+                content = responses.pop(0)
+                return {"choices": [{"message": {"content": content}}]}
+
+            self.agent_service.generate.side_effect = mock_gen
+
+            client = MockClient()
+            user_code = "public class A { void m() { if(a) { if(b) {} } } }"
+            user_instruction = "Flatten it."
+
+            await orch.execute_orchestration(client, user_code, user_instruction)
+
+            self.assertIsNotNone(client.results, "Should produce result after judge retry")
+            status_msgs = [s[1] for s in client.statuses]
+            self.assertTrue(any("Ph6" in m for m in status_msgs))
 
 
 if __name__ == "__main__":

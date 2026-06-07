@@ -167,6 +167,9 @@ async def run_case(case: Dict[str, Any], results: List[Dict[str, Any]], index: i
             self.statuses = []
             self.results = None
             self.insights = None
+        @property
+        def is_stale(self) -> bool:
+            return False
         async def send_status(self, role, content, **kw):
             self.statuses.append((role, content))
         async def send_result(self, **kwargs):

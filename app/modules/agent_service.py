@@ -51,13 +51,16 @@ class AgentService:
             if self.current_model_path == path and self.model is not None:
                 return
 
-            self.model = await asyncio.to_thread(
-                Llama,
-                model_path=path,
-                n_gpu_layers=n_gpu_layers,
-                n_ctx=n_ctx,
-                flash_attn=True,  # Critical for Gemma 3 / Phi memory efficiency
-                verbose=False,
+            self.model = await asyncio.wait_for(
+                asyncio.to_thread(
+                    Llama,
+                    model_path=path,
+                    n_gpu_layers=n_gpu_layers,
+                    n_ctx=n_ctx,
+                    flash_attn=True,  # Critical for Gemma 3 / Phi memory efficiency
+                    verbose=False,
+                ),
+                timeout=120,
             )
 
             self.current_model_path = path

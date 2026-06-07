@@ -166,12 +166,14 @@ The primary real-time channel. One connection per client; multiple refactors can
 ```
 Client connects -> ws://localhost:8000/ws
 Server accepts -> (101 Switching Protocols)
-Client sends -> refactor request or halt message
+Server starts heartbeat -> sends ping every 15s
+Client must respond with pong within 30s or marked stale
+Client sends -> refactor request | halt | pong | reconnect
 Server streams -> status messages during processing
 Server sends -> result message (always)
 Server sends -> insights message (always, after result)
 Connection stays -> ready for next request
-Client disconnects -> server cancels any running task
+Client disconnects -> server stops heartbeat, cancels running task
 ```
 
 ### Client -> Server Messages
@@ -213,6 +215,74 @@ Send any valid JSON object that matches the `RefactorRequest` schema:
 ```
 
 The running orchestration task is cancelled immediately. The session is NOT deleted from history -- it appears as `"Halted"` / `"ABORTED"`.
+
+---
+
+#### Pong (Heartbeat Response)
+
+The frontend **MUST** respond to every server `ping` to avoid being marked stale.
+
+```json
+{ "type": "pong" }
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `type` | `string` | Yes | Must be `"pong"` |
+
+**Behavior:** Resets the server's missed-pong counter to 0. No response payload from server.
+
+**Failure to respond:**
+- After **1 missed pong** (15s): counter increments, still active
+- After **2 missed pongs** (30s): connection marked **stale**
+- Stale connections: server stops sending `status` messages, but orchestration **continues** silently (LLM inference, DB writes, phase transitions still happen)
+- If client never responds to pings, heartbeat keeps incrementing and stays stale indefinitely
+
+**Important:** A stale connection can still receive `result` and `insights` messages -- those bypass the stale check. The connection is never auto-closed by the heartbeat; it only suppresses `status` streaming.
+
+---
+
+#### Reconnect (Session Restoration)
+
+Reattach to a previous session after disconnect. The backend looks up the session by ID and either replays completed results or swaps the live client reference for an ongoing orchestration.
+
+```json
+{
+  "type": "reconnect",
+  "session_id": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `type` | `string` | Yes | Must be `"reconnect"` |
+| `session_id` | `string` (UUIDv4) | Yes | Session ID from a previous `connection_id`, `result`, or history list |
+
+**Reconnection scenarios:**
+
+**Completed session (status: `"Completed"`):**
+The server replays the full result and insights exactly as they were sent originally. The frontend receives (in sequence):
+1. `result` message with the saved code, metrics, exit status
+2. `insights` message with the saved insights
+3. `status` message: `"Session restored."` (role `System`)
+
+The restored `result` uses the saved `refactored_code` on success, or the saved `original_code` / error state on failure.
+
+**Ongoing session (status: `"Processing"` or `"Halted"`):**
+The server swaps its internal client reference so **live** `status` messages stream to the reconnected WebSocket. The new connection receives:
+1. `status` message: `"Reconnected to ongoing session. Status: Processing"` (or `"Halted"`)
+
+From that point forward, all subsequent status updates (from whatever phase the orchestration is currently in), the final `result`, and `insights` flow to the reconnected socket.
+
+**Errors:**
+
+| Error | Response |
+|-------|----------|
+| Missing or empty `session_id` | `{ "type": "error", "message": "Missing session_id" }` |
+| Session ID not found in database | `{ "type": "error", "message": "Session not found" }` |
+| Unknown session status value | `{ "type": "error", "message": "Unknown session status: ..." }` |
+
+**Note:** The reconnected WebSocket gets its own heartbeat cycle. The client should handle `ping` messages and respond with `pong` as normal after reconnecting.
 
 ### Server -> Client Messages
 
@@ -408,6 +478,49 @@ Note: The `id` field matches the `connection_id` / `result.id`, allowing correla
 ```
 
 Sent immediately when the server acknowledges a halt request. The current orchestration is cancelled and the session is marked as "Halted" in the database.
+
+---
+
+#### `ping` -- Heartbeat Keepalive
+
+Sent automatically every **15 seconds** after the WebSocket connection is established. The frontend **must** respond with a `pong` message to keep the connection active.
+
+```json
+{
+  "type": "ping",
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "ts": "2026-06-07T12:00:15.123456Z"
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | `string` | Always `"ping"` |
+| `id` | `string` (UUIDv4) | Current session connection ID |
+| `ts` | `string` (ISO datetime) | Server timestamp of when this ping was sent |
+
+**How heartbeat works server-side:**
+
+1. On WebSocket connect, an async task starts the heartbeat loop
+2. Every 15 seconds (`HEARTBEAT_INTERVAL`), the server:
+   - Increments `missed_pongs` counter by 1
+   - Sends `{"type": "ping", "id": "...", "ts": "..."}` to the client
+3. When the client sends `{"type": "pong"}`, the server calls `handle_pong()` which resets `missed_pongs = 0`
+4. If `missed_pongs >= 2` (30 seconds without response), the connection is marked **stale** (`is_stale = True`)
+
+**Stale connection behavior:**
+- The server's `_notify` method checks `is_stale` before sending every `status` message
+- If stale: `send_status` is **skipped** entirely
+- Critical messages (`result`, `insights`) are **not** filtered by stale check -- they always send
+- The heartbeat continues running even for stale connections (allows recovery if client starts responding again)
+- The orchestration pipeline is **not affected** by staleness -- LLM inference, phase transitions, DB writes all continue normally
+- The connection is never forcibly closed by the heartbeat system
+
+**Frontend requirements:**
+- Register a `message` handler for `type === "ping"`
+- Respond immediately with `{"type": "pong"}`
+- If the user's device goes to sleep or network drops, the connection goes stale silently
+- On reconnect (via WebSocket `onclose` + manual reconnect), the client sends a `reconnect` message to restore state
 
 ---
 
@@ -613,24 +726,61 @@ Understanding the phases helps interpret the status message stream.
 ### 1. Establish WebSocket Connection
 
 ```javascript
-const ws = new WebSocket('ws://localhost:8000/ws');
+let ws;
+let currentSessionId = null;
+let heartbeatInterval = null;
+
+function connectWebSocket() {
+  ws = new WebSocket('ws://localhost:8000/ws');
+
+  ws.onopen = () => {
+    console.log('WebSocket connected');
+    // Optionally send reconnect if restoring a session
+    // const savedId = localStorage.getItem('lastSessionId');
+    // if (savedId) ws.send(JSON.stringify({ type: 'reconnect', session_id: savedId }));
+  };
+
+  ws.onclose = () => {
+    console.log('WebSocket disconnected');
+    clearInterval(heartbeatInterval);
+    // Optionally auto-reconnect after delay
+    // setTimeout(() => connectWebSocket(), 3000);
+  };
+
+  ws.onmessage = handleMessage;
+}
 ```
 
 ### 2. Listen for Messages
 
 ```javascript
-ws.onmessage = (event) => {
+function handleMessage(event) {
   const msg = JSON.parse(event.data);
 
   switch (msg.type) {
+
+    // === Lifecycle ===
+
     case 'connection_id':
       currentSessionId = msg.id;
+      localStorage.setItem('lastSessionId', msg.id);
       break;
+
+    // === Heartbeat ===
+
+    case 'ping':
+      // MUST respond immediately with pong or connection goes stale
+      ws.send(JSON.stringify({ type: 'pong' }));
+      break;
+
+    // === Orchestration progress ===
 
     case 'status':
       updateProgressBar(msg.content);
       addLogEntry(msg.role, msg.content);
       break;
+
+    // === Final result ===
 
     case 'result':
       if (msg.exit_status === 'SUCCESS') {
@@ -641,6 +791,8 @@ ws.onmessage = (event) => {
       updateMetrics(msg.performance);
       break;
 
+    // === Post-result insights ===
+
     case 'insights':
       if (Array.isArray(msg.insights)) {
         renderInsights(msg.insights);
@@ -649,15 +801,19 @@ ws.onmessage = (event) => {
       }
       break;
 
+    // === Halt acknowledgment ===
+
     case 'halt_acknowledged':
       showCancelledState();
       break;
+
+    // === Protocol errors ===
 
     case 'error':
       showError(msg.message, msg.details);
       break;
   }
-};
+}
 ```
 
 ### 3. Send Refactor Request
@@ -679,13 +835,36 @@ function cancelRefactor() {
 }
 ```
 
-### 5. Load History
+### 5. Reconnect to Session (After Disconnect)
+
+Use when the WebSocket reopens after an unexpected close. Restore the previous session so the user doesn't lose progress.
 
 ```javascript
-// List
+function reconnectToSession(sessionId) {
+  ws.send(JSON.stringify({
+    type: 'reconnect',
+    session_id: sessionId
+  }));
+}
+
+// Usage: after websocket reconnects, restore last known session
+// ws.onopen = () => {
+//   const lastId = localStorage.getItem('lastSessionId');
+//   if (lastId) reconnectToSession(lastId);
+// };
+```
+
+**Completed session:** You'll receive `result`, `insights`, and `"Session restored."` status.
+
+**Ongoing session:** You'll receive `"Reconnected to ongoing session..."` status, then live updates continue streaming.
+
+### 6. Load History
+
+```javascript
+// List (stubs with id + instruction)
 const stubs = await fetch('/api/history').then(r => r.json());
 
-// Detail
+// Full detail
 const detail = await fetch(`/api/history/${id}`).then(r => r.json());
 // detail.logs[] -> render as timeline
 // detail.original_code / detail.refactored_code -> show diff
@@ -699,7 +878,11 @@ const detail = await fetch(`/api/history/${id}`).then(r => r.json());
 | System busy (another user) | Status message: "Server is currently busy..." then auto-starts when lock frees | Show "queued" state, disable send button |
 | Already has running task | Status: "A refactor is already in progress..." | Show "halt first" message |
 | Exit status not SUCCESS | `result.code` is the original code | Display original code, show failure reason from insights |
-| Connection lost mid-run | WebSocket `onclose` fires | Server cancels task automatically. Reconnect and check history. |
+| Connection lost mid-run | WebSocket `onclose` fires. Orchestration continues server-side. | Auto-reconnect socket, send `reconnect` with `session_id` to re-attach to live session |
+| Connection goes stale (no pong) | Server stops sending `status` updates but pipeline continues | If user still sees stale UI, close and reconnect, then send reconnect message |
+| Reconnect to completed session | Server replays `result` + `insights` + `"Session restored."` | Re-render result/insights from the replay |
+| Reconnect to ongoing session | Server swaps to new socket. Live `status` streaming resumes. | Continue showing progress as normal |
+| Reconnect with invalid/missing session_id | `{ "type": "error", "message": "Missing session_id" }` or `"Session not found"` | Start fresh refactor instead |
 | 409 from REST endpoints | Orchestration lock held | Retry after current run completes |
 | GPU metrics all zero | No GPU available (NVML init failed) | Hide GPU panel or show "N/A" |
 | Empty insights on success | Insights generation failed (rare) | Show generic "Refactoring successful" message |
@@ -713,8 +896,11 @@ const detail = await fetch(`/api/history/${id}`).then(r => r.json());
 |------|--------|-----------|
 | 404 | REST `GET/DELETE /api/history/{id}` | Session ID not found |
 | 409 | REST endpoints + WebSocket | Orchestration lock held (another refactor running) |
-| `error` (WS type) | WebSocket | Malformed JSON or validation failure on refactor request |
+| `error` (WS type) | WebSocket | Malformed JSON, validation failure, missing/invalid session_id for reconnect |
 | `halt_acknowledged` (WS type) | WebSocket | User-requested cancellation confirmed |
+| `ping` (WS type) | WebSocket | Server heartbeat every 15s (bidirectional) |
+| `pong` (WS client msg) | WebSocket | Client heartbeat response (must reply within 30s) |
+| `reconnect` (WS client msg) | WebSocket | Client requests session restoration after reconnect |
 
 ---
 
@@ -735,6 +921,10 @@ const detail = await fetch(`/api/history/${id}`).then(r => r.json());
 | Architect plan synthesis attempts | 2 |
 | Judge audit attempts | 2 |
 | Generator multi-sample temperatures | 3 (0.1, 0.3, 0.5), or 1 during healing |
+| Heartbeat interval (`HEARTBEAT_INTERVAL`) | 15 seconds |
+| Max missed pongs before stale (`MAX_MISSED_PONGS`) | 2 |
+| Stale timeout (interval x max missed) | 30 seconds |
+| Stale behavior | Status messages suppressed; orchestration continues; result/insights still sent |
 
 ---
 
@@ -788,14 +978,24 @@ interface RefactorRequest {
   user_instruction: string;
 }
 
+interface PongRequest {
+  type: 'pong';
+}
+
 interface HaltRequest {
   type: 'halt';
+}
+
+interface ReconnectRequest {
+  type: 'reconnect';
+  session_id: string;  // UUIDv4 from previous connection
 }
 
 // === WebSocket Server -> Client ===
 
 type ServerMessage =
   | ConnectionIdMessage
+  | PingMessage
   | StatusMessage
   | ResultMessage
   | InsightsMessage
@@ -805,6 +1005,12 @@ type ServerMessage =
 interface ConnectionIdMessage {
   type: 'connection_id';
   id: string;
+}
+
+interface PingMessage {
+  type: 'ping';
+  id: string;
+  ts: string;  // ISO datetime
 }
 
 interface StatusMessage {

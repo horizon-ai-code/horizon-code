@@ -320,6 +320,9 @@ class MockClient:
         self.statuses = []
         self.results = None
         self.log: List[Dict] = []
+    @property
+    def is_stale(self) -> bool:
+        return False
     async def send_status(self, role, content, phase=None, **kw):
         entry = {"role": role.value if hasattr(role, 'value') else str(role), "phase": phase, "content": str(content)[:500]}
         self.statuses.append((role, str(content)[:200]))

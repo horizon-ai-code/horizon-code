@@ -31,9 +31,12 @@ orchestration_lock = asyncio.Lock()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Startup: no-op (services init at module level).
+    """Startup: clean zombie sessions (services init at module level).
     Shutdown: release loaded model VRAM.
     """
+    cleaned = connection.db.cleanup_zombie_sessions()
+    if cleaned:
+        print(f"Cleaned {cleaned} zombie sessions")
     yield
     await agent_service.unload()
 
@@ -93,19 +96,29 @@ async def entrypoint(websocket: WebSocket) -> None:
         websocket=websocket
     )
     await client_conn.start_heartbeat()
-    current_task: asyncio.Task | None = None
+    active_tasks: set[asyncio.Task] = set()
 
     async def run_orchestration(validated_data: RefactorRequest):
         try:
             client_conn.reset_id()
             await client_conn.send_connection_id()
 
-            async with orchestration_lock:
+            try:
+                await asyncio.wait_for(orchestration_lock.acquire(), timeout=600)
+            except asyncio.TimeoutError:
+                await client_conn.send_status(
+                    Role.System,
+                    "Orchestration timed out after 10 minutes.",
+                )
+                return
+            try:
                 await orchestrator.execute_orchestration(
                     client=client_conn,
                     user_code=validated_data.code,
                     user_instruction=validated_data.user_instruction,
                 )
+            finally:
+                orchestration_lock.release()
         except asyncio.CancelledError:
             await client_conn.send_halt_notification()
             raise
@@ -138,10 +151,11 @@ async def entrypoint(websocket: WebSocket) -> None:
                 continue
 
             if data.get("type") == "halt":
-                if current_task and not current_task.done():
-                    agent_service.stop()
-                    current_task.cancel()
-                    print(f"Halt triggered for session {client_conn.id}")
+                agent_service.stop()
+                for task in active_tasks.copy():
+                    if not task.done():
+                        task.cancel()
+                print(f"Halt triggered for session {client_conn.id}")
                 await websocket.send_json({
                     "type": "halt_acknowledged",
                     "id": client_conn.id,
@@ -156,7 +170,7 @@ async def entrypoint(websocket: WebSocket) -> None:
                 )
                 continue
 
-            if current_task and not current_task.done():
+            if any(not t.done() for t in active_tasks):
                 await client_conn.send_status(
                     role=Role.System,
                     content="A refactor is already in progress. Please halt it first if you want to start a new one.",
@@ -169,7 +183,9 @@ async def entrypoint(websocket: WebSocket) -> None:
                     content="Server is currently busy with another request. Your request is in the queue and will start automatically when ready...",
                 )
 
-            current_task = asyncio.create_task(run_orchestration(validated))
+            task = asyncio.create_task(run_orchestration(validated))
+            active_tasks.add(task)
+            task.add_done_callback(active_tasks.discard)
 
             # Notify frontend when the task actually starts processing
             async def notify_when_starting():
@@ -181,20 +197,24 @@ async def entrypoint(websocket: WebSocket) -> None:
                         )
                         break
                     await asyncio.sleep(0.5)
-            asyncio.create_task(notify_when_starting())
+            nt = asyncio.create_task(notify_when_starting())
+            active_tasks.add(nt)
+            nt.add_done_callback(active_tasks.discard)
 
     except WebSocketDisconnect as e:
         print(f"Connection disconnected: {e}")
-        if current_task and not current_task.done():
-            agent_service.stop()
-            current_task.cancel()
+        agent_service.stop()
+        for task in active_tasks.copy():
+            if not task.done():
+                task.cancel()
     except Exception as e:
         print(f"An error occurred: {e}")
     finally:
         await client_conn.stop_heartbeat()
-        if current_task and not current_task.done():
-            agent_service.stop()
-            current_task.cancel()
+        agent_service.stop()
+        for task in active_tasks.copy():
+            if not task.done():
+                task.cancel()
 
 
 async def _handle_reconnect(session_id: str, ws: WebSocket) -> None:
