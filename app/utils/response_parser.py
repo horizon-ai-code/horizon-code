@@ -136,8 +136,49 @@ class ResponseParser:
         json_str = re.sub(r'\bFalse\b', 'false', json_str)
 
         # Proactively remove trailing commas before closing braces/brackets
-        cleaned_json = re.sub(r",\s*([\]}])", r"\1", json_str)
+        cleaned_json = ResponseParser._remove_trailing_commas(json_str)
         return model.model_validate_json(cleaned_json)
+
+    @staticmethod
+    def _remove_trailing_commas(json_str: str) -> str:
+        """Remove trailing commas before ] or } but not inside strings."""
+        result = []
+        in_string = False
+        escape = False
+        i = 0
+        while i < len(json_str):
+            c = json_str[i]
+            if escape:
+                escape = False
+                result.append(c)
+                i += 1
+                continue
+            if c == '\\':
+                escape = True
+                result.append(c)
+                i += 1
+                continue
+            if c == '"':
+                in_string = not in_string
+                result.append(c)
+                i += 1
+                continue
+            if in_string:
+                result.append(c)
+                i += 1
+                continue
+            if c == ',':
+                j = i + 1
+                while j < len(json_str) and json_str[j] in ' \t\n\r':
+                    j += 1
+                if j < len(json_str) and json_str[j] in ']}':
+                    i = j
+                    result.append(json_str[i])
+                    i += 1
+                    continue
+            result.append(c)
+            i += 1
+        return ''.join(result)
 
     @staticmethod
     def extract_json_text(text: str | None) -> str:

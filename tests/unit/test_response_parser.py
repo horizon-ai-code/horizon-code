@@ -51,12 +51,17 @@ class TestResponseParser(unittest.TestCase):
         assert parsed == {"key": "just {opening", "other": True}
 
     def test_extract_json_trailing_comma_in_string(self):
-        """Trailing comma regex must not match inside string values."""
-        text = '{"msg": "ends with,}", "ok": true}'
-        result = ResponseParser._extract_json_braces(text)
-        assert result is not None
-        parsed = json.loads(result)
-        assert parsed == {"msg": "ends with,}", "ok": True}
+        """Trailing comma regex must not corrupt strings containing ,} or ,]."""
+        from pydantic import BaseModel
+
+        class _JsonModel(BaseModel):
+            msg: str
+            list: list[int]
+
+        text = '{"msg": "ends with,}", "list": [1, 2,],}'
+        result = ResponseParser.extract_json(text, _JsonModel)
+        assert result.msg == "ends with,}"
+        assert result.list == [1, 2]
 
     def test_extract_json_python_keywords(self):
         # JSON containing None instead of null
