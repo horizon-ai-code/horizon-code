@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi import WebSocketDisconnect
 
 from app.modules.connection_manager import ClientConnection
+from app.modules.context_manager import DatabaseManager
 
 
 class TestSafeSend(unittest.IsolatedAsyncioTestCase):
@@ -91,3 +92,14 @@ class TestHeartbeat(unittest.IsolatedAsyncioTestCase):
         await self.client_connection.start_heartbeat()
         await asyncio.sleep(0.03)
         await self.client_connection.stop_heartbeat()
+
+
+class TestReconnectHeartbeat(unittest.IsolatedAsyncioTestCase):
+    async def test_client_connection_start_heartbeat_exists(self):
+        """ClientConnection has start_heartbeat method."""
+        db = MagicMock(spec=DatabaseManager)
+        ws = AsyncMock()
+        conn = ClientConnection(ws, db)
+        assert hasattr(conn, 'start_heartbeat')
+        assert hasattr(conn, 'stop_heartbeat')
+        assert hasattr(conn, 'is_stale')

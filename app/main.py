@@ -210,6 +210,7 @@ async def _handle_reconnect(session_id: str, ws: WebSocket) -> None:
 
     new_conn = connection.create_websocket_connection(ws)
     new_conn.id = session_id
+    await new_conn.start_heartbeat()
 
     if record.get("status") == "Completed":
         await new_conn.send_result(
