@@ -16,7 +16,7 @@ from app.utils.ast_matcher import ASTMatcher
 from app.utils.formatters import format_agent_output, format_plan_for_generator
 from app.utils.paths import MODELS_CONFIG_PATH, PROMPTS_CONFIG_PATH
 from app.utils.performance import PerformanceTracker
-from app.utils.response_parser import ResponseParser, detect_repetition
+from app.utils.response_parser import ResponseParser
 from app.utils.schemas import (
     ArchitectAnalysisResponse,
     ASTArchitectResponse,
@@ -364,9 +364,8 @@ class Orchestrator:
             temp = 0.2 if _attempt == 0 else 0.5
             try:
                 raw = await self.agent_service.generate(
-                    messages, temp=temp, max_tokens=2048,
+                    messages, temp=temp, max_tokens=4096,
                     response_model=ASTArchitectResponse,
-                    check_repetition=detect_repetition,
                 )
                 arch_text = raw["choices"][0]["message"].get("content") or ""
                 header = "--- Planner Architect Output ---"
@@ -381,7 +380,16 @@ class Orchestrator:
                     print("  Architect attempt 1 failed. Retrying with temp=0.5...")
                     await self.agent_service.clear_context()
                 else:
-                    raise
+                    print("  Architect failed on both attempts. Falling back to strategy retry.")
+                    state.add_feedback({
+                        "failure_tier": FailureTier.TIER_1_SYNTAX,
+                        "error": "Architect failed to produce valid mutation plan on both attempts.",
+                    })
+                    if not state.strategy_iter_incremented:
+                        state.strategy_iter += 1
+                        state.strategy_iter_incremented = True
+                    state.current_phase = 2
+                    return
 
         # Enrich plan with concrete mutation details from code analysis
         assert state.active_plan is not None
@@ -883,9 +891,13 @@ class Orchestrator:
         intent_finding = None
         if state.intent_packet:
             intent_enum = RefactorIntent(state.intent_packet["specific_intent"])
-            intent_finding = self.validator.verify_intent(
-                intent_enum, state.base_code, state.working_code
-            )
+            try:
+                intent_finding = self.validator.verify_intent(
+                    intent_enum, state.base_code, state.working_code
+                )
+            except Exception as e:
+                print(f"  Intent verifier crashed for {intent_enum}: {e}")
+                intent_finding = None
             if intent_finding:
                 findings.append(intent_finding)
 
@@ -1078,7 +1090,16 @@ class Orchestrator:
                     print("  Judge attempt 1 failed (truncated). Retrying with temp=0.3, max_tokens=2048...")
                     await self.agent_service.clear_context()
                 else:
-                    raise
+                    print("  Judge failed on both attempts. Falling back to strategy retry.")
+                    state.add_feedback({
+                        "failure_tier": FailureTier.TIER_3_JUDGE,
+                        "error": "Judge auditor failed to produce valid verdict on both attempts.",
+                    })
+                    if not state.strategy_iter_incremented:
+                        state.strategy_iter += 1
+                        state.strategy_iter_incremented = True
+                    state.current_phase = 2
+                    return
 
         # Override: judge hallucinated IDENTICAL_CODE but code clearly changed
         if (audit_res.verdict == "REVISE"

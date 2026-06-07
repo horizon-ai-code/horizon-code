@@ -3,6 +3,8 @@ import json
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from app.modules.connection_manager import ClientConnection
 from app.modules.orchestrator import Orchestrator, OrchestrationState
 from app.modules.validator import Validator
@@ -119,3 +121,26 @@ class TestArchitectException(unittest.IsolatedAsyncioTestCase):
 
             await orch._notify(client, MagicMock(), "test message")
             client.send_status.assert_not_called()
+
+
+class TestIntentVerifierCrash(unittest.IsolatedAsyncioTestCase):
+    @pytest.mark.asyncio
+    async def test_verifier_crash_does_not_crash_orchestration(self):
+        """When verify_intent raises, orchestration continues without crashing."""
+        from app.utils.types import RefactorIntent
+        validator = Validator()
+        orig = validator.verifier_registry[RefactorIntent.FLATTEN_CONDITIONAL]
+        def crashing_verifier(a, b):
+            raise AttributeError("boom")
+        validator.verifier_registry[RefactorIntent.FLATTEN_CONDITIONAL] = crashing_verifier
+        try:
+            result = validator.verify_intent(
+                RefactorIntent.FLATTEN_CONDITIONAL,
+                "class A { void m() { if(a) { } } }",
+                "class A { void m() { if(!a) return; } }",
+            )
+            assert result is not None, "Should return a ValidationFinding on crash"
+            assert result.failure_tier.value == "TIER_2_C_INTENT_MATH"
+            assert "Verifier crashed" in result.error_report.message
+        finally:
+            validator.verifier_registry[RefactorIntent.FLATTEN_CONDITIONAL] = orig

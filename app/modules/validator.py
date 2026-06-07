@@ -562,7 +562,16 @@ class Validator:
         verifier = self.verifier_registry.get(intent)
         if not verifier:
             return None
-        success, msg = verifier(orig_res["ast"], refac_res["ast"])
+        try:
+            success, msg = verifier(orig_res["ast"], refac_res["ast"])
+        except Exception as e:
+            return ValidationFinding(
+                failure_tier=FailureTier.TIER_2_C_INTENT_MATH,
+                error_report=ErrorReport(
+                    message=f"Verifier crashed: {str(e)[:100]}",
+                ),
+                recovery_hint="Check if the refactoring actually achieved the structural goal.",
+            )
         if success:
             return None
         return ValidationFinding(
