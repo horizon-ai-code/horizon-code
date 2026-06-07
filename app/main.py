@@ -249,6 +249,7 @@ async def _handle_reconnect(session_id: str, ws: WebSocket) -> None:
         if insights:
             await new_conn.send_insights(insights)
         await new_conn.send_status(Role.System, "Session restored.")
+        await new_conn.stop_heartbeat()
     elif record.get("status") in ("Processing", "Halted"):
         orchestrator.current_client = new_conn
         await new_conn.send_status(
