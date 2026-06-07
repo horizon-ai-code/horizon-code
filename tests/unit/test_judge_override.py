@@ -104,72 +104,70 @@ class TestStructuralAuditorResponse(unittest.TestCase):
 
 
 class TestJudgeOverrideLogic(unittest.TestCase):
-    """Test the override logic that corrects judge hallucinations."""
+    """Test the structural-hash override logic that corrects judge hallucinations.
+
+    Uses Validator.has_structural_change() instead of string comparison,
+    so whitespace, comments, renames, and import changes don't trigger false overrides.
+    """
+
+    def setUp(self):
+        from app.modules.validator import Validator
+        self.validator = Validator()
 
     def test_identical_code_code_changed_should_override(self):
-        """Judge says IDENTICAL_CODE but code clearly changed — should override."""
-        base_code = "public int foo() { return 1; }"
-        working_code = "public int foo() { return 2; }"
-        orig_cc = 1
-        refac_cc = 2
-
-        should_override = (
-            working_code.strip() != base_code.strip()
-            and orig_cc != refac_cc
-        )
-        self.assertTrue(should_override)
+        """Judge says IDENTICAL_CODE but literal value changed — override."""
+        base_code = "class A { int foo() { return 1; } }"
+        working_code = "class A { int foo() { return 2; } }"
+        self.assertTrue(self.validator.has_structural_change(base_code, working_code))
 
     def test_identical_code_code_unchanged_should_not_override(self):
-        """Judge says IDENTICAL_CODE and code is truly unchanged — no override."""
-        base_code = "public int foo() { return 1; }"
+        """Code is identical — no override."""
+        base_code = "class A { int foo() { return 1; } }"
         working_code = base_code
-        orig_cc = 1
-        refac_cc = 1
-
-        should_override = (
-            working_code.strip() != base_code.strip()
-            and orig_cc != refac_cc
-        )
-        self.assertFalse(should_override)
+        self.assertFalse(self.validator.has_structural_change(base_code, working_code))
 
     def test_logic_drift_no_override(self):
-        """Judge says LOGIC_DRIFT — should NEVER override, regardless of CC."""
-        base_code = "public int foo() { return 1; }"
-        working_code = "public int foo() { return 2; }"
-        orig_cc = 1
-        refac_cc = 2
+        """LOGIC_DRIFT is never overridden regardless of structural change.
+        The override only fires for IDENTICAL_CODE — the orchestrator checks
+        the issue type before calling has_structural_change."""
+        base_code = "class A { int foo() { return 1; } }"
+        working_code = "class A { int foo() { return 2; } }"
+        self.assertTrue(self.validator.has_structural_change(base_code, working_code))
+        # LOGIC_DRIFT would still not be overridden — the orchestrator's
+        # condition `audit_res.issues[0].issue_type == "IDENTICAL_CODE"` would be False
 
-        # LOGIC_DRIFT is never overridden
-        self.assertNotEqual(working_code, base_code)
-        self.assertNotEqual(orig_cc, refac_cc)
+    def test_rename_only_should_not_override(self):
+        """Variable rename only — structural hash is identical, no override.
+        This is the key improvement over string comparison."""
+        base_code = "class A { int foo() { int x = 1; return x; } }"
+        working_code = "class A { int foo() { int y = 1; return y; } }"
+        self.assertFalse(self.validator.has_structural_change(base_code, working_code))
 
-    def test_code_changed_same_cc_should_not_override(self):
-        """Code changed but CC same — override should NOT fire (not enough evidence)."""
-        base_code = "public int foo() { int x = 1; return x; }"
-        working_code = "public int foo() { int y = 1; return y; }"
-        orig_cc = 2
-        refac_cc = 2
+    def test_whitespace_change_should_not_override(self):
+        """Whitespace-only change — structural hash is identical, no override."""
+        base_code = "class A { int foo() { return 1; } }"
+        working_code = "class A {   int foo() {\n    return 1;\n  } }"
+        self.assertFalse(self.validator.has_structural_change(base_code, working_code))
 
-        # Code changed (rename variable) but CC same — judge might be right
-        # our override requires CC change as extra evidence
-        should_override = (
-            working_code.strip() != base_code.strip()
-            and orig_cc != refac_cc
-        )
-        self.assertFalse(should_override)
+    def test_import_change_should_not_override(self):
+        """Import change only — structural hash is identical (imports stripped)."""
+        base_code = "import java.util.List;\nclass A { int foo() { return 1; } }"
+        working_code = "import java.util.ArrayList;\nclass A { int foo() { return 1; } }"
+        self.assertFalse(self.validator.has_structural_change(base_code, working_code))
 
-    def test_code_unchanged_same_cc_should_not_override(self):
-        """Nothing changed — no override."""
-        base_code = "public int foo() { return 1; }"
+    def test_add_method_structural_change(self):
+        """Adding a new method changes the AST structure — override should fire."""
+        base_code = "class A { int foo() { return 1; } }"
+        working_code = "class A { int foo() { return 1; } int bar() { return 2; } }"
+        self.assertTrue(self.validator.has_structural_change(base_code, working_code))
+
+    def test_syntax_error_fallback_to_string(self):
+        """If either code has syntax errors, falls back to string comparison."""
+        base_code = "class A { int foo() { return 1; } }"
+        working_code = "this is not valid java"
+        self.assertTrue(self.validator.has_structural_change(base_code, working_code))
         working_code = base_code
-        orig_cc = 1
-        refac_cc = 1
-
-        should_override = (
-            working_code.strip() != base_code.strip()
-            and orig_cc != refac_cc
-        )
-        self.assertFalse(should_override)
+        self.assertFalse(self.validator.has_structural_change(base_code, working_code))
 
 
 if __name__ == "__main__":

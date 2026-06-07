@@ -546,6 +546,21 @@ class Validator:
                     return func.cyclomatic_complexity
         return None
 
+    def has_structural_change(self, orig_code: str, refac_code: str) -> bool:
+        """Compare structural signatures — returns True if AST structure differs.
+
+        Runs both codes through check_syntax (which strips imports and auto-wraps).
+        Compares structural hashes (ignores variable names, formatting, comments).
+        Falls back to string comparison if either side has syntax errors.
+        """
+        orig_res = self.check_syntax(orig_code)
+        refac_res = self.check_syntax(refac_code)
+        if not orig_res["is_valid"] or not refac_res["is_valid"]:
+            return orig_code.strip() != refac_code.strip()
+        orig_sig = ASTWalker.get_structural_signature(orig_res["ast"])
+        refac_sig = ASTWalker.get_structural_signature(refac_res["ast"])
+        return orig_sig != refac_sig
+
     def verify_intent(
         self, intent: RefactorIntent, orig_code: str, refac_code: str
     ) -> ValidationFinding | None:

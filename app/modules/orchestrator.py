@@ -1105,7 +1105,7 @@ class Orchestrator:
         if (audit_res.verdict == "REVISE"
             and audit_res.issues
             and audit_res.issues[0].issue_type == "IDENTICAL_CODE"):
-            if state.working_code.strip() != state.base_code.strip():
+            if self.validator.has_structural_change(state.base_code, state.working_code):
                 print("WARNING: Judge hallucinated IDENTICAL_CODE — overriding to ACCEPT")
                 audit_res.verdict = "ACCEPT"
                 audit_res.issues = []
