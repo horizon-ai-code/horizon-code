@@ -48,13 +48,27 @@ class ResponseParser:
         """Extract outermost JSON object using brace-depth counting.
 
         Handles nested braces correctly unlike simple find/rfind.
+        Tracks string state to avoid miscounting braces inside strings.
         """
         start = text.find("{")
         if start == -1:
             return None
         depth = 0
+        in_string = False
+        escape = False
         for i in range(start, len(text)):
             c = text[i]
+            if escape:
+                escape = False
+                continue
+            if c == "\\":
+                escape = True
+                continue
+            if c == '"' and not escape:
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
             if c == "{":
                 depth += 1
             elif c == "}":

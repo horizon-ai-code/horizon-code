@@ -42,6 +42,22 @@ class TestResponseParser(unittest.TestCase):
         result = ResponseParser.extract_json(text, IntentPacket)
         self.assertEqual(result.specific_intent, RefactorIntent.SPLIT_LOOP)
 
+    def test_extract_json_braces_in_string(self):
+        """Unbalanced brace inside a string must not break depth counting."""
+        text = '{"key": "just {opening", "other": true}'
+        result = ResponseParser._extract_json_braces(text)
+        assert result is not None
+        parsed = json.loads(result)
+        assert parsed == {"key": "just {opening", "other": True}
+
+    def test_extract_json_trailing_comma_in_string(self):
+        """Trailing comma regex must not match inside string values."""
+        text = '{"msg": "ends with,}", "ok": true}'
+        result = ResponseParser._extract_json_braces(text)
+        assert result is not None
+        parsed = json.loads(result)
+        assert parsed == {"msg": "ends with,}", "ok": True}
+
     def test_extract_json_python_keywords(self):
         # JSON containing None instead of null
         text = '{"refactor_category": "CONTROL_FLOW", "specific_intent": "REMOVE_CONTROL_FLAG", "scope_anchor": {"class": "A", "member": None, "unit_type": "METHOD_UNIT"}}'
