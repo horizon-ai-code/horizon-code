@@ -31,6 +31,15 @@ class MockClient:
     async def send_insights(self, insights):
         self.insights = insights
 
+    async def send_connection_id(self):
+        pass
+
+    def reset_id(self):
+        self.id = "test-session"
+
+    async def send_halt_notification(self):
+        pass
+
 
 class TestOrchestratorFlow(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
@@ -388,6 +397,77 @@ class TestConfigLoading(unittest.TestCase):
             orch = Orchestrator(MagicMock(), MagicMock(), MagicMock())
             self.assertEqual(orch.model_config, {})
             self.assertEqual(orch.prompts, {})
+
+
+class TestSingleRefactorFlow(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.mock_config = {
+            "single": {"name": "qwen-7b", "filename": "qwen-7b"},
+            "planner": {"name": "p", "filename": "p"},
+            "generator": {"name": "g", "filename": "g"},
+            "judge": {"name": "j", "filename": "j"},
+        }
+        self.mock_prompts = {
+            "single": {"coder": "c", "insights": "i"},
+            "planner": {
+                "classifier": "c",
+                "architect": "a",
+                "architect_analysis": "an",
+                "analysis_guidance": {},
+                "synthesis_guidance": {},
+            },
+            "generator": {"coder": "co", "coder_guidance": {}},
+            "judge": {"auditor": "au", "insights": "i"},
+        }
+
+    @patch("app.main.agent_service")
+    async def test_single_refactor_success(self, mock_agent_service):
+        """Single mode: code gen pass 1 + insights pass 2, returns result."""
+        from app.main import run_single_refactor, orchestrator, connection
+
+        mock_agent_service.generate = AsyncMock()
+        mock_agent_service.swap = AsyncMock()
+        mock_agent_service.unload = AsyncMock()
+        mock_agent_service.clear_context = AsyncMock()
+
+        with patch.object(connection, "db") as mock_db:
+            # Ensure orchestrator has "single" config/prompts
+            orig_config = orchestrator.model_config.copy()
+            orig_prompts = orchestrator.prompts.copy()
+            orchestrator.model_config = {**orig_config, **self.mock_config}
+            orchestrator.prompts = {**orig_prompts, **self.mock_prompts}
+
+            responses = [
+                "<code>class A { void m() { return 42; } }</code>",
+                json.dumps(
+                    {
+                        "insights": [
+                            {
+                                "title": "Inlined",
+                                "details": "Replaced variable with literal.",
+                            }
+                        ]
+                    }
+                ),
+            ]
+
+            async def mock_gen(messages, **kwargs):
+                content = responses.pop(0)
+                return {"choices": [{"message": {"content": content}}]}
+
+            mock_agent_service.generate.side_effect = mock_gen
+
+            client = MockClient()
+            user_code = "class A { void m() { int x = 42; return x; } }"
+            user_instruction = "Inline the variable"
+
+            await run_single_refactor(client, user_code, user_instruction)
+
+            self.assertIsNotNone(client.results)
+            self.assertEqual(client.results["exit_status"], "SUCCESS")
+            self.assertIsNotNone(client.insights)
+            self.assertEqual(len(client.insights), 1)
+            self.assertEqual(client.insights[0]["title"], "Inlined")
 
 
 if __name__ == "__main__":

@@ -13,7 +13,13 @@ from app.modules.connection_manager import ClientConnection, ConnectionManager
 from app.modules.context_manager import db
 from app.modules.orchestrator import Orchestrator
 from app.modules.validator import Validator
-from app.utils.schemas import DeleteResponse, HistoryDetail, HistoryStub
+from app.utils.response_parser import ResponseParser
+from app.utils.schemas import (
+    DeleteResponse,
+    HistoryDetail,
+    HistoryStub,
+    RefactorInsightsResponse,
+)
 from app.utils.types import RefactorRequest, Role
 
 # Module-level singletons — initialized at import (lightweight, no model loaded).
@@ -97,6 +103,7 @@ async def entrypoint(websocket: WebSocket) -> None:
     )
     await client_conn.start_heartbeat()
     active_tasks: set[asyncio.Task] = set()
+    current_task: asyncio.Task | None = None
 
     async def run_orchestration(validated_data: RefactorRequest):
         try:
@@ -150,6 +157,67 @@ async def entrypoint(websocket: WebSocket) -> None:
                 await _handle_reconnect(data.get("session_id", ""), websocket)
                 continue
 
+            if data.get("type") == "single":
+                code = data.get("code", "")
+                instruction = data.get("user_instruction", "")
+                if len(code.strip()) < 10:
+                    await websocket.send_json({"type": "error", "message": "Code must be at least 10 characters"})
+                    continue
+                if len(instruction.strip()) < 3:
+                    await websocket.send_json({"type": "error", "message": "Instruction must be at least 3 characters"})
+                    continue
+
+                if any(not t.done() for t in active_tasks):
+                    await client_conn.send_status(Role.System, "A refactor is already in progress. Please halt it first.")
+                    continue
+
+                task = asyncio.create_task(
+                    run_single_refactor(client_conn, code, instruction)
+                )
+                active_tasks.add(task)
+                task.add_done_callback(active_tasks.discard)
+                continue
+
+            if data.get("type") == "refactor" or not data.get("type"):
+                try:
+                    validated = RefactorRequest(**data)
+                except ValidationError as e:
+                    await websocket.send_json(
+                        {"type": "error", "message": "Invalid data format", "details": e.errors()}
+                    )
+                    continue
+
+                if any(not t.done() for t in active_tasks):
+                    await client_conn.send_status(
+                        role=Role.System,
+                        content="A refactor is already in progress. Please halt it first if you want to start a new one.",
+                    )
+                    continue
+
+                if orchestration_lock.locked():
+                    await client_conn.send_status(
+                        role=Role.System,
+                        content="Server is currently busy with another request. Your request is in the queue and will start automatically when ready...",
+                    )
+
+                task = asyncio.create_task(run_orchestration(validated))
+                active_tasks.add(task)
+                task.add_done_callback(active_tasks.discard)
+
+                async def notify_when_starting():
+                    while True:
+                        if not orchestration_lock.locked():
+                            await client_conn.send_status(
+                                Role.System,
+                                "Your request is now being processed...",
+                            )
+                            break
+                        await asyncio.sleep(0.5)
+                nt = asyncio.create_task(notify_when_starting())
+                active_tasks.add(nt)
+                nt.add_done_callback(active_tasks.discard)
+                continue
+
             if data.get("type") == "halt":
                 agent_service.stop()
                 for task in active_tasks.copy():
@@ -161,45 +229,6 @@ async def entrypoint(websocket: WebSocket) -> None:
                     "id": client_conn.id,
                 })
                 continue
-
-            try:
-                validated = RefactorRequest(**data)
-            except ValidationError as e:
-                await websocket.send_json(
-                    {"type": "error", "message": "Invalid data format", "details": e.errors()}
-                )
-                continue
-
-            if any(not t.done() for t in active_tasks):
-                await client_conn.send_status(
-                    role=Role.System,
-                    content="A refactor is already in progress. Please halt it first if you want to start a new one.",
-                )
-                continue
-
-            if orchestration_lock.locked():
-                await client_conn.send_status(
-                    role=Role.System,
-                    content="Server is currently busy with another request. Your request is in the queue and will start automatically when ready...",
-                )
-
-            task = asyncio.create_task(run_orchestration(validated))
-            active_tasks.add(task)
-            task.add_done_callback(active_tasks.discard)
-
-            # Notify frontend when the task actually starts processing
-            async def notify_when_starting():
-                while True:
-                    if not orchestration_lock.locked():
-                        await client_conn.send_status(
-                            Role.System,
-                            "Your request is now being processed...",
-                        )
-                        break
-                    await asyncio.sleep(0.5)
-            nt = asyncio.create_task(notify_when_starting())
-            active_tasks.add(nt)
-            nt.add_done_callback(active_tasks.discard)
 
     except WebSocketDisconnect as e:
         print(f"Connection disconnected: {e}")
@@ -264,6 +293,100 @@ async def _handle_reconnect(session_id: str, ws: WebSocket) -> None:
             )
     else:
         await ws.send_json({"type": "error", "message": f"Unknown session status: {record.get('status')}"})
+
+
+async def run_single_refactor(
+    client: ClientConnection,
+    user_code: str,
+    user_instruction: str,
+) -> None:
+    """Single-model refactor: 7B generates code then insights. No orchestration pipeline."""
+    try:
+        client.reset_id()
+        await client.send_connection_id()
+
+        async with orchestration_lock:
+            cfg = orchestrator.model_config["single"]
+            prompts = orchestrator.prompts["single"]
+
+            await agent_service.swap(cfg)
+            await agent_service.clear_context()
+
+            # --- Pass 1: Generate code ---
+            await client.send_status(Role.Generator, "Generating refactored code...")
+            coder_prompt = (
+                f"<code>{user_code}</code>\n\n"
+                f"Instruction: {user_instruction}"
+            )
+            messages = [
+                {"role": "system", "content": prompts["coder"]},
+                {"role": "user", "content": coder_prompt},
+            ]
+            raw = await agent_service.generate(messages, temp=0.1, max_tokens=4096)
+            response_text = raw["choices"][0]["message"].get("content") or ""
+            refactored = ResponseParser.extract_xml(response_text, "code") or user_code
+
+            # --- Pass 2: Generate insights (same model) ---
+            await client.send_status(Role.Judge, "Generating insights...")
+            await agent_service.clear_context()
+            insight_prompt = (
+                f"Original: <code>{user_code}</code>\n"
+                f"Refactored: <code>{refactored}</code>"
+            )
+            insight_messages = [
+                {"role": "system", "content": prompts["insights"]},
+                {"role": "user", "content": insight_prompt},
+            ]
+            raw2 = await agent_service.generate(
+                insight_messages, temp=0.1, max_tokens=1000,
+                response_model=RefactorInsightsResponse,
+            )
+            insight_text = raw2["choices"][0]["message"].get("content") or ""
+            insights_res = ResponseParser.extract_json(insight_text, RefactorInsightsResponse)
+
+            # --- Send result ---
+            await client.send_result(
+                final_code=refactored,
+                original_complexity=None,
+                refactored_complexity=None,
+                performance_metrics={},
+                exit_status="SUCCESS",
+                generator_model=cfg.get("name"),
+            )
+
+            # --- Send insights ---
+            insight_dicts = [i.model_dump() for i in insights_res.insights]
+            await client.send_insights(insight_dicts)
+
+            # --- Persist ---
+            connection.db.create_session(
+                id=client.id,
+                instruction=user_instruction,
+                original_code=user_code,
+                mode="single",
+            )
+            connection.db.complete_session(
+                id=client.id,
+                refactored_code=refactored,
+                insights=json.dumps(insight_dicts),
+                original_complexity=None,
+                refactored_complexity=None,
+                performance_metrics={},
+                exit_status="SUCCESS",
+                mode="single",
+            )
+
+    except asyncio.CancelledError:
+        await client.send_halt_notification()
+        raise
+    except Exception as e:
+        print(f"Single Refactor Failure (ID: {client.id}): {e}")
+        try:
+            await client.send_status(Role.System, f"Single refactor failed: {str(e)[:200]}")
+        except Exception:
+            pass
+    finally:
+        await agent_service.unload()
 
 
 @app.get("/api/history", response_model=list[HistoryStub], dependencies=[Depends(get_db)])

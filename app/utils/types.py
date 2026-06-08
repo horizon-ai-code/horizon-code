@@ -10,6 +10,7 @@ class OrchestrationMode(str, Enum):
 
 
 class RefactorRequest(BaseModel):
+    type: Literal["refactor"] = "refactor"  # type: ignore[assignment]
     code: str
     user_instruction: str
     mode: OrchestrationMode = OrchestrationMode.MULTI
