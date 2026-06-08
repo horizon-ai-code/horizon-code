@@ -76,5 +76,11 @@ class TestResponseParser(unittest.TestCase):
         result = ResponseParser.extract_json(text, IntentPacket)
         self.assertEqual(result.specific_intent, RefactorIntent.REMOVE_CONTROL_FLAG)
 
+    def test_python_keywords_not_replaced_in_strings(self):
+        """None/True/False inside string values must not be replaced."""
+        text = '{"refactor_category": "CONTROL_FLOW", "specific_intent": "REMOVE_CONTROL_FLAG", "scope_anchor": {"class": "set to None, True or False", "unit_type": "METHOD_UNIT"}}'
+        result = ResponseParser.extract_json(text, IntentPacket)
+        assert result.scope_anchor.target_class == "set to None, True or False"
+
 if __name__ == '__main__':
     unittest.main()

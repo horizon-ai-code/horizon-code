@@ -63,6 +63,51 @@ class ResponseParser:
             yield i, c, in_string
 
     @staticmethod
+    def _replace_python_keywords(json_str: str) -> str:
+        """Replace Python None/True/False outside string boundaries only.
+
+        Uses manual iteration to track string context, preventing
+        corruption of string values like 'set to None'.
+        """
+        parts = []
+        i = 0
+        in_str = False
+        escape = False
+        while i < len(json_str):
+            c = json_str[i]
+            if escape:
+                escape = False
+                parts.append(c)
+                i += 1
+                continue
+            if c == '\\':
+                escape = True
+                parts.append(c)
+                i += 1
+                continue
+            if c == '"':
+                in_str = not in_str
+                parts.append(c)
+                i += 1
+                continue
+            if in_str:
+                parts.append(c)
+                i += 1
+                continue
+            # Outside string — check for keywords
+            for kw, replacement in [("None", "null"), ("True", "true"), ("False", "false")]:
+                if json_str[i:i+len(kw)] == kw and \
+                   (i == 0 or not json_str[i-1].isalnum()) and \
+                   (i+len(kw) >= len(json_str) or not json_str[i+len(kw)].isalnum()):
+                    parts.append(replacement)
+                    i += len(kw)
+                    break
+            else:
+                parts.append(c)
+                i += 1
+        return "".join(parts)
+
+    @staticmethod
     def _extract_json_braces(text: str) -> str | None:
         """Extract outermost JSON object using brace-depth counting.
 
@@ -137,10 +182,8 @@ class ResponseParser:
         json_str = re.sub(r'(?<![:"\w])//.*$', '', json_str, flags=re.MULTILINE)
 
         # Fix Python-isms (None -> null, True -> true, False -> false)
-        # We use word boundaries to avoid replacing parts of strings
-        json_str = re.sub(r'\bNone\b', 'null', json_str)
-        json_str = re.sub(r'\bTrue\b', 'true', json_str)
-        json_str = re.sub(r'\bFalse\b', 'false', json_str)
+        # String-aware to avoid corrupting values like "set to None"
+        json_str = ResponseParser._replace_python_keywords(json_str)
 
         # Proactively remove trailing commas before closing braces/brackets
         cleaned_json = ResponseParser._remove_trailing_commas(json_str)
