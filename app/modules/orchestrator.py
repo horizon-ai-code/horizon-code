@@ -393,7 +393,8 @@ class Orchestrator:
                     return
 
         # Enrich plan with concrete mutation details from code analysis
-        assert state.active_plan is not None
+        if state.active_plan is None:
+            raise RuntimeError("Architect produced no plan but pipeline continued")
         intent_key = state.intent_packet.get("specific_intent", "") if state.intent_packet else None
         target_method = state.intent_packet.get("scope_anchor", {}).get("member", "") if state.intent_packet else None
         enriched = ASTMatcher.enrich_mutations(
@@ -581,7 +582,10 @@ class Orchestrator:
         """
         import time as _time
 
-        assert state.active_plan is not None
+        if state.active_plan is None:
+            print("No active plan for sequential execution. Falling through to single-shot.")
+            state.current_phase = 4
+            return
         mutations = self._order_mutations(
             state.active_plan.get("ast_mutations", [])
         )
@@ -1102,14 +1106,19 @@ class Orchestrator:
                     state.current_phase = 2
                     return
 
-        # Override: judge hallucinated IDENTICAL_CODE but code clearly changed
-        if (audit_res.verdict == "REVISE"
-            and audit_res.issues
-            and audit_res.issues[0].issue_type == "IDENTICAL_CODE"):
-            if self.validator.has_structural_change(state.base_code, state.working_code):
-                print("WARNING: Judge hallucinated IDENTICAL_CODE — overriding to ACCEPT")
-                audit_res.verdict = "ACCEPT"
-                audit_res.issues = []
+        # Override: judge hallucinated IDENTICAL_CODE or LOGIC_DRIFT
+        if audit_res.verdict == "REVISE" and audit_res.issues:
+            issue = audit_res.issues[0]
+            if issue.issue_type == "IDENTICAL_CODE":
+                if self.validator.has_structural_change(state.base_code, state.working_code):
+                    print("WARNING: Judge hallucinated IDENTICAL_CODE — overriding to ACCEPT")
+                    audit_res.verdict = "ACCEPT"
+                    audit_res.issues = []
+            elif issue.issue_type == "LOGIC_DRIFT":
+                if not self.validator.has_structural_change(state.base_code, state.working_code):
+                    print("WARNING: Judge hallucinated LOGIC_DRIFT — overriding to ACCEPT")
+                    audit_res.verdict = "ACCEPT"
+                    audit_res.issues = []
 
         await self._notify(
             client,

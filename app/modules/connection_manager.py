@@ -50,12 +50,12 @@ class ClientConnection:
             await asyncio.sleep(self.HEARTBEAT_INTERVAL)
             if not self._heartbeat_running:
                 break
-            self._missed_pongs += 1
             await self._safe_send({
                 "type": "ping",
                 "id": self.id,
                 "ts": datetime.utcnow().isoformat() + "Z",
             })
+            self._missed_pongs += 1
 
     def handle_pong(self) -> None:
         self._missed_pongs = 0

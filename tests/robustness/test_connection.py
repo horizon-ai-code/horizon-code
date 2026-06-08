@@ -94,6 +94,20 @@ class TestHeartbeat(unittest.IsolatedAsyncioTestCase):
         await self.client_connection.stop_heartbeat()
 
 
+    async def test_heartbeat_increments_after_send(self):
+        """_missed_pongs increments after ping is sent, not before."""
+        db = MagicMock(spec=DatabaseManager)
+        ws = AsyncMock()
+        conn = ClientConnection(ws, db)
+        conn.HEARTBEAT_INTERVAL = 0.01
+        conn.MAX_MISSED_PONGS = 3
+        await conn.start_heartbeat()
+        await asyncio.sleep(0.02)
+        await conn.stop_heartbeat()
+        self.assertLess(conn._missed_pongs, 3)
+        self.assertGreater(conn._missed_pongs, 0)
+
+
 class TestReconnectHeartbeat(unittest.IsolatedAsyncioTestCase):
     async def test_client_connection_start_heartbeat_exists(self):
         """ClientConnection has start_heartbeat method."""

@@ -277,7 +277,7 @@ async def get_history():
     dependencies=[Depends(get_db)],
 )
 async def get_history_detail(
-    history_id: UUID4, _=Depends(check_orchestration_lock)
+    history_id: UUID4,
 ):
     record = await connection.get_history_by_id(str(history_id))
     if not record:
@@ -291,7 +291,7 @@ async def get_history_detail(
     dependencies=[Depends(get_db)],
 )
 async def delete_history_detail(
-    history_id: UUID4, _=Depends(check_orchestration_lock)
+    history_id: UUID4,
 ):
     deleted = await connection.delete_history_by_id(str(history_id))
     if not deleted:
