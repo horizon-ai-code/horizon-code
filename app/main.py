@@ -251,11 +251,17 @@ async def _handle_reconnect(session_id: str, ws: WebSocket) -> None:
         await new_conn.send_status(Role.System, "Session restored.")
         await new_conn.stop_heartbeat()
     elif record.get("status") in ("Processing", "Halted"):
-        orchestrator.current_client = new_conn
-        await new_conn.send_status(
-            Role.System,
-            f"Reconnected to ongoing session. Status: {record.get('status')}",
-        )
+        if orchestrator.current_client is not None:
+            orchestrator.current_client = new_conn
+            await new_conn.send_status(
+                Role.System,
+                f"Reconnected to ongoing session. Status: {record.get('status')}",
+            )
+        else:
+            await new_conn.send_status(
+                Role.System,
+                "Session lost due to server restart. Please start a new refactor.",
+            )
     else:
         await ws.send_json({"type": "error", "message": f"Unknown session status: {record.get('status')}"})
 

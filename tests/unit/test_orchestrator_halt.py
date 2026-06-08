@@ -93,5 +93,36 @@ class TestOrchestratorHalt(unittest.IsolatedAsyncioTestCase):
             except RefactorHistory.DoesNotExist:
                 pass
 
+    async def test_reconnect_processing_after_restart_returns_error(self):
+        """When backend restarts and session is Processing, reconnect returns error not fake status."""
+        from app.main import connection, orchestrator, _handle_reconnect
+
+        # Simulate restart: orchestrator.current_client is None
+        orchestrator.current_client = None
+
+        mock_ws = AsyncMock()
+        mock_ws.send_json = AsyncMock()
+        connection.get_history_by_id = AsyncMock(return_value={
+            "status": "Processing",
+            "refactored_code": None,
+            "original_complexity": None,
+            "refactored_complexity": None,
+            "avg_gpu_utilization": 0,
+            "avg_gpu_memory": 0,
+            "avg_gpu_memory_used": 0,
+            "inference_time": 0,
+            "exit_status": None,
+            "insights": None,
+        })
+
+        await _handle_reconnect("test-session-id", mock_ws)
+
+        calls = [call.args[0] for call in mock_ws.send_json.call_args_list]
+        status_calls = [c for c in calls if c.get("type") == "status"]
+        self.assertTrue(
+            any("Session lost" in c.get("content", "") for c in status_calls),
+            "Should tell user the session was lost, not promise live updates",
+        )
+
 if __name__ == "__main__":
     unittest.main()
