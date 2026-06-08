@@ -178,7 +178,7 @@ async def entrypoint(websocket: WebSocket) -> None:
                 task.add_done_callback(active_tasks.discard)
                 continue
 
-            if data.get("type") == "refactor" or not data.get("type"):
+            if data.get("type") == "multi" or not data.get("type"):
                 try:
                     validated = RefactorRequest(**data)
                 except ValidationError as e:
