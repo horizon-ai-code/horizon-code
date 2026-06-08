@@ -1,7 +1,8 @@
 import asyncio
 import json
 import unittest
-from unittest.mock import AsyncMock, MagicMock, patch
+import builtins
+from unittest.mock import AsyncMock, MagicMock, mock_open, patch
 
 from app.modules.agent_service import AgentService
 from app.modules.context_manager import DatabaseManager
@@ -370,6 +371,23 @@ class TestOrchestratorFlow(unittest.IsolatedAsyncioTestCase):
             self.assertIsNotNone(client.results, "Should produce result after judge retry")
             status_msgs = [s[1] for s in client.statuses]
             self.assertTrue(any("Ph6" in m for m in status_msgs))
+
+
+class TestConfigLoading(unittest.TestCase):
+    def test_config_missing_file_raises(self):
+        """Orchestrator raises FileNotFoundError when config file is missing."""
+        with patch("builtins.open") as mock_open:
+            mock_open.side_effect = FileNotFoundError("No such file")
+            with self.assertRaises(FileNotFoundError):
+                Orchestrator(MagicMock(), MagicMock(), MagicMock())
+
+    def test_config_empty_file_sets_defaults(self):
+        """Empty YAML files produce empty dicts, not None."""
+        with patch("builtins.open", mock_open(read_data="")), \
+             patch("yaml.safe_load", return_value=None):
+            orch = Orchestrator(MagicMock(), MagicMock(), MagicMock())
+            self.assertEqual(orch.model_config, {})
+            self.assertEqual(orch.prompts, {})
 
 
 if __name__ == "__main__":

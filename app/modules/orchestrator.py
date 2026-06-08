@@ -106,11 +106,12 @@ class Orchestrator:
 
         try:
             with open(MODELS_CONFIG_PATH) as config:
-                self.model_config: dict[str, Any] = yaml.safe_load(config)
+                self.model_config: dict[str, Any] = yaml.safe_load(config) or {}
             with open(PROMPTS_CONFIG_PATH) as p_config:
-                self.prompts: dict[str, Any] = yaml.safe_load(p_config)
-        except yaml.YAMLError as e:
-            print(f"Error loading config: {e}")
+                self.prompts: dict[str, Any] = yaml.safe_load(p_config) or {}
+        except (yaml.YAMLError, FileNotFoundError, PermissionError) as e:
+            print(f"Fatal: Failed to load config: {e}")
+            raise
 
     @staticmethod
     def _order_mutations(mutations: list[dict[str, Any]]) -> list[dict[str, Any]]:
