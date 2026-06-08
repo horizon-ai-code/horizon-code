@@ -1305,36 +1305,41 @@ class Orchestrator:
                 '', result
             )
 
-        # 2. Remove null checks not in original
+        # 2. Remove null checks not in original — robust to no-brace bodies
         orig_null_count = len(_re.findall(r'if\s*\(\s*\w+\s*==\s*null\s*\)', original))
-        gen_null_checks = list(_re.finditer(r'if\s*\(\s*\w+\s*==\s*null\s*\)\s*\{?', result))
+        gen_null_checks = list(_re.finditer(r'if\s*\(\s*\w+\s*==\s*null\s*\)', result))
         extra_nulls = len(gen_null_checks) - orig_null_count
         if extra_nulls > 0:
-            # Remove the last N null checks from the generated code
             for match in reversed(gen_null_checks[-extra_nulls:]):
                 start = match.start()
-                # Find matching closing brace
-                depth = 0
                 end = start
-                in_block = False
-                for i in range(start, len(result)):
-                    if result[i] == '{':
-                        depth += 1
-                        in_block = True
-                    elif result[i] == '}':
-                        depth -= 1
-                        if in_block and depth == 0:
-                            end = i + 1
-                            break
-                result = result[:start] + result[end:]
+                after = result[match.end():]
+                after_stripped = after.lstrip()
+                if after_stripped.startswith('{'):
+                    brace_pos = match.end() + (len(after) - len(after_stripped))
+                    depth = 0
+                    for i in range(brace_pos, len(result)):
+                        if result[i] == '{':
+                            depth += 1
+                        elif result[i] == '}':
+                            depth -= 1
+                            if depth == 0:
+                                end = i + 1
+                                break
+                else:
+                    semicolon = after.find(';')
+                    if semicolon >= 0:
+                        end = match.end() + semicolon + 1
+                if end > start:
+                    result = result[:start] + result[end:]
 
         # 3. Strip 'public' modifier from bare methods that weren't public
         org_pub_methods = set(_re.findall(r'public\s+\w+\s+(\w+)\s*\(', original))
         gen_pub_methods = set(_re.findall(r'public\s+\w+\s+(\w+)\s*\(', result))
         for method in gen_pub_methods - org_pub_methods:
             result = _re.sub(
-                r'\bpublic\s+(' + _re.escape(method) + r')\s*\(',
-                r'\1(',
+                r'\bpublic\s+(\w+\s+' + _re.escape(method) + r'\s*\()',
+                r'\1',
                 result
             )
 
