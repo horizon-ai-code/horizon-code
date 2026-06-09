@@ -1277,6 +1277,9 @@ class Orchestrator:
         cfg = self.model_config["single"]
         prompts = self.prompts["single"]
 
+        tracker = PerformanceTracker()
+        await tracker.start_tracking()
+
         # Create DB session first so _notify can persist logs
         self.db.create_session(
             id=client.id, instruction=user_instruction,
@@ -1323,11 +1326,14 @@ class Orchestrator:
         insights_res = ResponseParser.extract_json(insight_text, RefactorInsightsResponse)
         insight_dicts = [i.model_dump() for i in insights_res.insights]
 
+        await tracker.stop_tracking()
+        perf = tracker.get_metrics()
+
         await client.send_result(
             final_code=refactored,
             original_complexity=orig_cc,
             refactored_complexity=refac_cc,
-            performance_metrics={},
+            performance_metrics=perf,
             exit_status="SUCCESS",
             generator_model=cfg.get("name"),
         )
@@ -1337,7 +1343,7 @@ class Orchestrator:
             id=client.id, refactored_code=refactored,
             insights=json.dumps(insight_dicts),
             original_complexity=orig_cc, refactored_complexity=refac_cc,
-            performance_metrics={}, exit_status="SUCCESS", mode="single",
+            performance_metrics=perf, exit_status="SUCCESS", mode="single",
         )
 
     @staticmethod
