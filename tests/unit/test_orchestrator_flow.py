@@ -423,51 +423,61 @@ class TestSingleRefactorFlow(unittest.IsolatedAsyncioTestCase):
     @patch("app.main.agent_service")
     async def test_single_refactor_success(self, mock_agent_service):
         """Single mode: code gen pass 1 + insights pass 2, returns result."""
-        from app.main import run_single_refactor, orchestrator, connection
+        from app.main import run_single_refactor, orchestrator
 
         mock_agent_service.generate = AsyncMock()
         mock_agent_service.swap = AsyncMock()
         mock_agent_service.unload = AsyncMock()
         mock_agent_service.clear_context = AsyncMock()
 
-        with patch.object(connection, "db") as mock_db:
-            # Ensure orchestrator has "single" config/prompts
-            orig_config = orchestrator.model_config.copy()
-            orig_prompts = orchestrator.prompts.copy()
-            orchestrator.model_config = {**orig_config, **self.mock_config}
-            orchestrator.prompts = {**orig_prompts, **self.mock_prompts}
+        # Replace orchestrator's agent_service and db refs with mocks
+        original_agent = orchestrator.agent_service
+        orchestrator.agent_service = mock_agent_service
+        original_db = orchestrator.db
+        orchestrator.db = MagicMock()
 
-            responses = [
-                "<code>class A { void m() { return 42; } }</code>",
-                json.dumps(
-                    {
-                        "insights": [
-                            {
-                                "title": "Inlined",
-                                "details": "Replaced variable with literal.",
-                            }
-                        ]
-                    }
-                ),
-            ]
+        # Ensure orchestrator has "single" config/prompts
+        orig_config = orchestrator.model_config.copy()
+        orig_prompts = orchestrator.prompts.copy()
+        orchestrator.model_config = {**orig_config, **self.mock_config}
+        orchestrator.prompts = {**orig_prompts, **self.mock_prompts}
 
-            async def mock_gen(messages, **kwargs):
-                content = responses.pop(0)
-                return {"choices": [{"message": {"content": content}}]}
+        responses = [
+            "<code>class A { void m() { return 42; } }</code>",
+            json.dumps(
+                {
+                    "insights": [
+                        {
+                            "title": "Inlined",
+                            "details": "Replaced variable with literal.",
+                        }
+                    ]
+                }
+            ),
+        ]
 
-            mock_agent_service.generate.side_effect = mock_gen
+        async def mock_gen(messages, **kwargs):
+            content = responses.pop(0)
+            return {"choices": [{"message": {"content": content}}]}
 
-            client = MockClient()
-            user_code = "class A { void m() { int x = 42; return x; } }"
-            user_instruction = "Inline the variable"
+        mock_agent_service.generate.side_effect = mock_gen
 
-            await run_single_refactor(client, user_code, user_instruction)
+        client = MockClient()
+        user_code = "class A { void m() { int x = 42; return x; } }"
+        user_instruction = "Inline the variable"
 
-            self.assertIsNotNone(client.results)
-            self.assertEqual(client.results["exit_status"], "SUCCESS")
-            self.assertIsNotNone(client.insights)
-            self.assertEqual(len(client.insights), 1)
-            self.assertEqual(client.insights[0]["title"], "Inlined")
+        await run_single_refactor(client, user_code, user_instruction)
+
+        orchestrator.agent_service = original_agent
+        orchestrator.db = original_db
+        orchestrator.model_config = orig_config
+        orchestrator.prompts = orig_prompts
+
+        self.assertIsNotNone(client.results)
+        self.assertEqual(client.results["exit_status"], "SUCCESS")
+        self.assertIsNotNone(client.insights)
+        self.assertEqual(len(client.insights), 1)
+        self.assertEqual(client.insights[0]["title"], "Inlined")
 
 
 if __name__ == "__main__":

@@ -45,6 +45,7 @@ class Role(str, Enum):
     Judge = "Judge"
     Validator = "Validator"
     System = "System"
+    Monolith = "Monolith"
 
 
 class RefactorCategory(str, Enum):

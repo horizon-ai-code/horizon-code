@@ -1270,6 +1270,76 @@ class Orchestrator:
             print(f"Failed to parse insights JSON: {e}")
             return [{"title": "Refactoring Summary", "details": text.strip()}]
 
+    async def run_single_refactor(
+        self, client: ClientConnection, user_code: str, user_instruction: str
+    ) -> None:
+        """Single-model refactor using the 7B model. No multi-agent pipeline."""
+        cfg = self.model_config["single"]
+        prompts = self.prompts["single"]
+
+        # Create DB session first so _notify can persist logs
+        self.db.create_session(
+            id=client.id, instruction=user_instruction,
+            original_code=user_code, mode="single",
+        )
+
+        await self.agent_service.swap(cfg)
+        await self.agent_service.clear_context()
+
+        orig_cc = self.validator.get_complexity(user_code)
+
+        # --- Pass 1: Generate code ---
+        await self._notify(client, Role.Monolith, "Generating refactored code...", phase=1)
+        coder_prompt = (
+            f"<code>{user_code}</code>\n\n"
+            f"Instruction: {user_instruction}"
+        )
+        messages = [
+            {"role": "system", "content": prompts["coder"]},
+            {"role": "user", "content": coder_prompt},
+        ]
+        raw = await self.agent_service.generate(messages, temp=0.1, max_tokens=4096)
+        response_text = raw["choices"][0]["message"].get("content") or ""
+        refactored = ResponseParser.extract_xml(response_text, "code") or user_code
+
+        refac_cc = self.validator.get_complexity(refactored)
+
+        # --- Pass 2: Generate insights ---
+        await self._notify(client, Role.Monolith, "Generating insights...", phase=2)
+        await self.agent_service.clear_context()
+        insight_prompt = (
+            f"Original: <code>{user_code}</code>\n"
+            f"Refactored: <code>{refactored}</code>"
+        )
+        insight_messages = [
+            {"role": "system", "content": prompts["insights"]},
+            {"role": "user", "content": insight_prompt},
+        ]
+        raw2 = await self.agent_service.generate(
+            insight_messages, temp=0.1, max_tokens=1000,
+            response_model=RefactorInsightsResponse,
+        )
+        insight_text = raw2["choices"][0]["message"].get("content") or ""
+        insights_res = ResponseParser.extract_json(insight_text, RefactorInsightsResponse)
+        insight_dicts = [i.model_dump() for i in insights_res.insights]
+
+        await client.send_result(
+            final_code=refactored,
+            original_complexity=orig_cc,
+            refactored_complexity=refac_cc,
+            performance_metrics={},
+            exit_status="SUCCESS",
+            generator_model=cfg.get("name"),
+        )
+        await client.send_insights(insight_dicts)
+
+        self.db.complete_session(
+            id=client.id, refactored_code=refactored,
+            insights=json.dumps(insight_dicts),
+            original_complexity=orig_cc, refactored_complexity=refac_cc,
+            performance_metrics={}, exit_status="SUCCESS", mode="single",
+        )
+
     @staticmethod
     def _get_cc_rule(intent: RefactorIntent) -> str:
         """Returns the CC rule for an intent: STRICT, LOOSENED, SKIP, or EXTRACT_RULE."""

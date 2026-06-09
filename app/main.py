@@ -13,12 +13,10 @@ from app.modules.connection_manager import ClientConnection, ConnectionManager
 from app.modules.context_manager import db
 from app.modules.orchestrator import Orchestrator
 from app.modules.validator import Validator
-from app.utils.response_parser import ResponseParser
 from app.utils.schemas import (
     DeleteResponse,
     HistoryDetail,
     HistoryStub,
-    RefactorInsightsResponse,
 )
 from app.utils.types import RefactorRequest, Role
 
@@ -300,81 +298,13 @@ async def run_single_refactor(
     user_code: str,
     user_instruction: str,
 ) -> None:
-    """Single-model refactor: 7B generates code then insights. No orchestration pipeline."""
+    """Thin wrapper — delegates to Orchestrator.run_single_refactor() inside the lock."""
     try:
         client.reset_id()
         await client.send_connection_id()
 
         async with orchestration_lock:
-            cfg = orchestrator.model_config["single"]
-            prompts = orchestrator.prompts["single"]
-
-            await agent_service.swap(cfg)
-            await agent_service.clear_context()
-
-            # --- Pass 1: Generate code ---
-            await client.send_status(Role.Generator, "Generating refactored code...")
-            coder_prompt = (
-                f"<code>{user_code}</code>\n\n"
-                f"Instruction: {user_instruction}"
-            )
-            messages = [
-                {"role": "system", "content": prompts["coder"]},
-                {"role": "user", "content": coder_prompt},
-            ]
-            raw = await agent_service.generate(messages, temp=0.1, max_tokens=4096)
-            response_text = raw["choices"][0]["message"].get("content") or ""
-            refactored = ResponseParser.extract_xml(response_text, "code") or user_code
-
-            # --- Pass 2: Generate insights (same model) ---
-            await client.send_status(Role.Judge, "Generating insights...")
-            await agent_service.clear_context()
-            insight_prompt = (
-                f"Original: <code>{user_code}</code>\n"
-                f"Refactored: <code>{refactored}</code>"
-            )
-            insight_messages = [
-                {"role": "system", "content": prompts["insights"]},
-                {"role": "user", "content": insight_prompt},
-            ]
-            raw2 = await agent_service.generate(
-                insight_messages, temp=0.1, max_tokens=1000,
-                response_model=RefactorInsightsResponse,
-            )
-            insight_text = raw2["choices"][0]["message"].get("content") or ""
-            insights_res = ResponseParser.extract_json(insight_text, RefactorInsightsResponse)
-
-            # --- Send result ---
-            await client.send_result(
-                final_code=refactored,
-                original_complexity=None,
-                refactored_complexity=None,
-                performance_metrics={},
-                exit_status="SUCCESS",
-                generator_model=cfg.get("name"),
-            )
-
-            # --- Send insights ---
-            insight_dicts = [i.model_dump() for i in insights_res.insights]
-            await client.send_insights(insight_dicts)
-
-            # --- Persist ---
-            connection.db.create_session(
-                id=client.id,
-                instruction=user_instruction,
-                original_code=user_code,
-                mode="single",
-            )
-            connection.db.complete_session(
-                id=client.id,
-                refactored_code=refactored,
-                insights=json.dumps(insight_dicts),
-                original_complexity=None,
-                refactored_complexity=None,
-                performance_metrics={},
-                exit_status="SUCCESS",
-                mode="single",
-            )
+            await orchestrator.run_single_refactor(client, user_code, user_instruction)
 
     except asyncio.CancelledError:
         await client.send_halt_notification()
