@@ -1268,7 +1268,7 @@ class Orchestrator:
             return [i.model_dump() for i in insights_res.insights]
         except (ValidationError, ValueError, json.JSONDecodeError) as e:
             print(f"Failed to parse insights JSON: {e}")
-            return text.strip()
+            return [{"title": "Refactoring Summary", "details": text.strip()}]
 
     @staticmethod
     def _get_cc_rule(intent: RefactorIntent) -> str:
