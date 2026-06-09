@@ -105,9 +105,6 @@ async def entrypoint(websocket: WebSocket) -> None:
 
     async def run_orchestration(validated_data: RefactorRequest):
         try:
-            client_conn.reset_id()
-            await client_conn.send_connection_id()
-
             try:
                 await asyncio.wait_for(orchestration_lock.acquire(), timeout=600)
             except asyncio.TimeoutError:
@@ -117,6 +114,8 @@ async def entrypoint(websocket: WebSocket) -> None:
                 )
                 return
             try:
+                client_conn.reset_id()
+                await client_conn.send_connection_id()
                 await orchestrator.execute_orchestration(
                     client=client_conn,
                     user_code=validated_data.code,
@@ -300,10 +299,9 @@ async def run_single_refactor(
 ) -> None:
     """Thin wrapper — delegates to Orchestrator.run_single_refactor() inside the lock."""
     try:
-        client.reset_id()
-        await client.send_connection_id()
-
         async with orchestration_lock:
+            client.reset_id()
+            await client.send_connection_id()
             await orchestrator.run_single_refactor(client, user_code, user_instruction)
 
     except asyncio.CancelledError:
