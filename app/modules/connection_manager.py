@@ -73,7 +73,11 @@ class ClientConnection:
 
     async def send_connection_id(self) -> None:
         """Sends the unique session ID to the frontend upon connection."""
-        await self._safe_send({"type": "connection_id", "id": self.id})
+        await self._safe_send({
+            "type": "connection_id",
+            "id": self.id,
+            "created_at": datetime.utcnow().isoformat() + "Z",
+        })
 
     async def send_status(self, role: Role, content: str) -> None:
         await self._safe_send({"type": "status", "role": role, "content": content})
