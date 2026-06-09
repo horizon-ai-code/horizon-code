@@ -23,6 +23,7 @@ class LogEntry(BaseModel):
 class HistoryStub(BaseModel):
     id: UUID4
     user_instruction: str
+    created_at: datetime
 
 
 class HistoryDetail(BaseModel):
