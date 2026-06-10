@@ -116,6 +116,7 @@ class Orchestrator:
     @staticmethod
     def _order_mutations(mutations: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Order mutations by dependency: RENAME first, then ADD_*, then MODIFY."""
+
         def sort_key(m: dict[str, Any]) -> int:
             action = m.get("action", "")
             if action == "RENAME_SYMBOL":
@@ -125,11 +126,10 @@ class Orchestrator:
             if action in ("MODIFY_METHOD", "REMOVE_METHOD"):
                 return 2
             return 3
+
         return sorted(mutations, key=sort_key)
 
-    async def execute_orchestration(
-        self, client: ClientConnection, user_code: str, user_instruction: str
-    ) -> None:
+    async def execute_orchestration(self, client: ClientConnection, user_code: str, user_instruction: str) -> None:
         """Main orchestration loop.
 
         Runs 6 phases sequentially: Baseline → Strategy → Execution →
@@ -159,9 +159,7 @@ class Orchestrator:
             )
 
             # --- PHASE 1: Baseline ---
-            await self._notify(
-                client, Role.Validator, "Ph1: Baselining code structure...", phase=1
-            )
+            await self._notify(client, Role.Validator, "Ph1: Baselining code structure...", phase=1)
             state.original_complexity = self.validator.get_complexity(state.base_code)
             state.current_phase = 2
 
@@ -232,9 +230,7 @@ class Orchestrator:
     # SECTION 4: Phase 2 — Strategy
     # ============================================================
 
-    async def _run_phase_2(
-        self, client: ClientConnection, state: OrchestrationState
-    ) -> None:
+    async def _run_phase_2(self, client: ClientConnection, state: OrchestrationState) -> None:
         """Phase 2: The Strategy Block (Inference 1, 2, 3)."""
         state.strategy_iter_incremented = False
         # Step 3: Classifier
@@ -261,13 +257,9 @@ class Orchestrator:
                 response_model=IntentClassifierResponse,
             )
             response_text = raw["choices"][0]["message"].get("content") or ""
-            print(
-                f"\n--- Planner Classifier Output ---\n{response_text}\n-------------------------------"
-            )
+            print(f"\n--- Planner Classifier Output ---\n{response_text}\n-------------------------------")
 
-            classifier_res = ResponseParser.extract_json(
-                response_text, IntentClassifierResponse
-            )
+            classifier_res = ResponseParser.extract_json(response_text, IntentClassifierResponse)
             state.intent_packet = classifier_res.intent_packet.model_dump()
 
             await self._notify(
@@ -281,9 +273,7 @@ class Orchestrator:
         await self.agent_service.clear_context()
 
         # Step 5a: Architect ANALYSIS (NEW)
-        await self._notify(
-            client, Role.Planner, "Ph2: Analyzing code structure...", phase=2
-        )
+        await self._notify(client, Role.Planner, "Ph2: Analyzing code structure...", phase=2)
 
         analysis_prompt = (
             f"Intent Packet: {json.dumps(state.intent_packet)}\n"
@@ -313,14 +303,10 @@ class Orchestrator:
             response_model=ArchitectAnalysisResponse,
         )
         analysis_text = raw["choices"][0]["message"].get("content") or ""
-        print(
-            f"\n--- Planner Analysis Output ---\n{analysis_text}\n-------------------------------"
-        )
+        print(f"\n--- Planner Analysis Output ---\n{analysis_text}\n-------------------------------")
 
         try:
-            analysis_model = ResponseParser.extract_json(
-                analysis_text, ArchitectAnalysisResponse
-            )
+            analysis_model = ResponseParser.extract_json(analysis_text, ArchitectAnalysisResponse)
             state.architect_analysis = analysis_model.model_dump()
         except (ValidationError, ValueError, json.JSONDecodeError):
             state.architect_analysis = {}
@@ -336,9 +322,7 @@ class Orchestrator:
         await self.agent_service.clear_context()
 
         # Step 5c: Architect SYNTHESIS (MODIFIED)
-        await self._notify(
-            client, Role.Planner, "Ph2: Designing mutation plan...", phase=2
-        )
+        await self._notify(client, Role.Planner, "Ph2: Designing mutation plan...", phase=2)
 
         arch_prompt = (
             f"Analysis: {json.dumps(state.architect_analysis)}\n"
@@ -365,7 +349,9 @@ class Orchestrator:
             temp = 0.2 if _attempt == 0 else 0.5
             try:
                 raw = await self.agent_service.generate(
-                    messages, temp=temp, max_tokens=4096,
+                    messages,
+                    temp=temp,
+                    max_tokens=4096,
                     response_model=ASTArchitectResponse,
                 )
                 arch_text = raw["choices"][0]["message"].get("content") or ""
@@ -382,10 +368,12 @@ class Orchestrator:
                     await self.agent_service.clear_context()
                 else:
                     print("  Architect failed on both attempts. Falling back to strategy retry.")
-                    state.add_feedback({
-                        "failure_tier": FailureTier.TIER_1_SYNTAX,
-                        "error": "Architect failed to produce valid mutation plan on both attempts.",
-                    })
+                    state.add_feedback(
+                        {
+                            "failure_tier": FailureTier.TIER_1_SYNTAX,
+                            "error": "Architect failed to produce valid mutation plan on both attempts.",
+                        }
+                    )
                     if not state.strategy_iter_incremented:
                         state.strategy_iter += 1
                         state.strategy_iter_incremented = True
@@ -432,9 +420,7 @@ class Orchestrator:
     # SECTION 5: Phase 3 — Execution
     # ============================================================
 
-    async def _run_phase_3(
-        self, client: ClientConnection, state: OrchestrationState
-    ) -> None:
+    async def _run_phase_3(self, client: ClientConnection, state: OrchestrationState) -> None:
         """Phase 3: Plan Execution (Inference 3)."""
         await self._notify(client, Role.Generator, "Ph3: Implementing plan...", phase=3)
         await self.agent_service.swap(self.model_config["generator"])
@@ -451,9 +437,7 @@ class Orchestrator:
                 f"Fix the syntax error above. Output only valid Java wrapped in <code> tags."
             )
         else:
-            coder_prompt = format_plan_for_generator(
-                state.active_plan or {}, state.base_code
-            )
+            coder_prompt = format_plan_for_generator(state.active_plan or {}, state.base_code)
 
         system_content = self.prompts["generator"]["coder"]
         if state.intent_packet:
@@ -474,9 +458,7 @@ class Orchestrator:
         # Multi-sample generation — try 3 temperatures, pick best
         samples: list[dict[str, Any]] = []
         for sample_temp in (retry_temp, 0.3, 0.5) if not state.syntax_error_context else (retry_temp,):
-            raw = await self.agent_service.generate(
-                messages, temp=sample_temp, max_tokens=gen_max_tokens
-            )
+            raw = await self.agent_service.generate(messages, temp=sample_temp, max_tokens=gen_max_tokens)
             coder_text = raw["choices"][0]["message"].get("content") or ""
             sample_code = ResponseParser.extract_xml(coder_text, "code")
             if sample_code:
@@ -491,12 +473,14 @@ class Orchestrator:
                 except (javalang.parser.JavaSyntaxError, javalang.tokenizer.LexerError):
                     pass
                 cc = self.validator.get_complexity(sample_code) if syntax_ok else 999
-                samples.append({
-                    "code": sample_code,
-                    "syntax_ok": syntax_ok,
-                    "cc": cc,
-                    "temp": sample_temp,
-                })
+                samples.append(
+                    {
+                        "code": sample_code,
+                        "syntax_ok": syntax_ok,
+                        "cc": cc,
+                        "temp": sample_temp,
+                    }
+                )
 
         if samples:
             # Pick best: prefer syntax valid, then lowest CC increase
@@ -505,6 +489,7 @@ class Orchestrator:
                     return (-1000, 0)
                 cc_delta = s["cc"] - state.original_complexity
                 return (0, -cc_delta)  # higher score = better
+
             best = max(samples, key=sample_score)
 
             print(
@@ -517,9 +502,7 @@ class Orchestrator:
                 state.working_code = best["code"]
                 state.syntax_iter = 0
                 state.syntax_error_context = None
-                await self._notify(
-                    client, Role.Generator, "Code refactored.", content=best["code"]
-                )
+                await self._notify(client, Role.Generator, "Code refactored.", content=best["code"])
                 print(best["code"])
                 state.current_phase = 4
                 return
@@ -534,10 +517,12 @@ class Orchestrator:
                     }
                     state.current_phase = 3
                     return
-                state.add_feedback({
-                    "failure_tier": FailureTier.TIER_1_SYNTAX,
-                    "error": "Multi-sample: no valid code after multiple attempts.",
-                })
+                state.add_feedback(
+                    {
+                        "failure_tier": FailureTier.TIER_1_SYNTAX,
+                        "error": "Multi-sample: no valid code after multiple attempts.",
+                    }
+                )
                 if not state.strategy_iter_incremented:
                     state.strategy_iter += 1
                     state.strategy_iter_incremented = True
@@ -571,9 +556,7 @@ class Orchestrator:
 
     # --- Sequential Phase 3 (one mutation at a time) ---
 
-    async def _run_sequential_phase_3(
-        self, client: ClientConnection, state: OrchestrationState
-    ) -> None:
+    async def _run_sequential_phase_3(self, client: ClientConnection, state: OrchestrationState) -> None:
         """Apply mutations one at a time in sequence.
 
         Used for multi-mutation plans on first iteration. Each mutation
@@ -586,19 +569,13 @@ class Orchestrator:
             print("No active plan for sequential execution. Falling through to single-shot.")
             state.current_phase = 4
             return
-        mutations = self._order_mutations(
-            state.active_plan.get("ast_mutations", [])
-        )
+        mutations = self._order_mutations(state.active_plan.get("ast_mutations", []))
         state.mutation_queue = mutations
         state.mutation_index = 0
         state.sequential_attempts = 0
         state.gen_timings = []
 
-        await self._notify(
-            client, Role.Generator,
-            f"Ph3: Sequential editing ({len(mutations)} mutations)...",
-            phase=3
-        )
+        await self._notify(client, Role.Generator, f"Ph3: Sequential editing ({len(mutations)} mutations)...", phase=3)
         await self.agent_service.swap(self.model_config["generator"])
         await self.agent_service.clear_context()
 
@@ -616,17 +593,13 @@ class Orchestrator:
             details = mutation.get("details", {})
 
             current_code = state.working_code
-            mutation_text = (
-                f"{action} {target}\n"
-                f"Details: {json.dumps(details, indent=2)}"
-            )
+            mutation_text = f"{action} {target}\nDetails: {json.dumps(details, indent=2)}"
 
             # For MODIFY steps, include context about ADD_* items already applied
             context = ""
             if action.startswith("MODIFY_") and state.mutation_index > 0:
                 added_items = [
-                    m for m in state.mutation_queue[:state.mutation_index]
-                    if m.get("action", "").startswith("ADD_")
+                    m for m in state.mutation_queue[: state.mutation_index] if m.get("action", "").startswith("ADD_")
                 ]
                 if added_items:
                     context = "\nPreviously added items (must be referenced in updated method):\n"
@@ -652,9 +625,7 @@ class Orchestrator:
             ]
 
             t0 = _time.time()
-            raw = await self.agent_service.generate(
-                messages, temp=0.1, max_tokens=3072
-            )
+            raw = await self.agent_service.generate(messages, temp=0.1, max_tokens=3072)
             gen_time_ms = int((_time.time() - t0) * 1000)
 
             coder_text = raw["choices"][0]["message"].get("content") or ""
@@ -673,8 +644,9 @@ class Orchestrator:
                 state.gen_timings.append(timing_entry)
                 if state.sequential_attempts <= 3:
                     await self._notify(
-                        client, Role.Generator,
-                        f"No <code> block for {action} {target}. Retrying (attempt {state.sequential_attempts}/3)..."
+                        client,
+                        Role.Generator,
+                        f"No <code> block for {action} {target}. Retrying (attempt {state.sequential_attempts}/3)...",
                     )
                     continue
                 state.working_code = state.base_code
@@ -696,8 +668,9 @@ class Orchestrator:
                         "broken_code": new_code,
                     }
                     await self._notify(
-                        client, Role.Generator,
-                        f"Syntax fail on {action} {target}. Healing (attempt {state.sequential_attempts}/3)..."
+                        client,
+                        Role.Generator,
+                        f"Syntax fail on {action} {target}. Healing (attempt {state.sequential_attempts}/3)...",
                     )
                     continue
                 state.working_code = state.base_code
@@ -709,9 +682,7 @@ class Orchestrator:
                 if member and member not in target_scopes:
                     target_scopes.append(member)
 
-            boundary_finding = self.validator.verify_boundary(
-                current_code, new_code, target_scopes
-            )
+            boundary_finding = self.validator.verify_boundary(current_code, new_code, target_scopes)
             if boundary_finding:
                 state.sequential_attempts += 1
                 timing_entry["status"] = "BOUNDARY_FAIL"
@@ -719,8 +690,9 @@ class Orchestrator:
                 state.gen_timings.append(timing_entry)
                 if state.sequential_attempts <= 3:
                     await self._notify(
-                        client, Role.Generator,
-                        f"Boundary violation on {action} {target}. Retrying (attempt {state.sequential_attempts}/3)..."
+                        client,
+                        Role.Generator,
+                        f"Boundary violation on {action} {target}. Retrying (attempt {state.sequential_attempts}/3)...",
                     )
                     continue
                 state.working_code = state.base_code
@@ -737,25 +709,23 @@ class Orchestrator:
             print(f"\n--- Sequential Step {state.mutation_index}/{len(state.mutation_queue)} ---")
             print(f"Action: {action} {target} | Time: {gen_time_ms}ms | Status: OK")
             await self._notify(
-                client, Role.Generator,
-                f"Applied {action} {target} ({state.mutation_index}/{len(state.mutation_queue)}). {gen_time_ms}ms"
+                client,
+                Role.Generator,
+                f"Applied {action} {target} ({state.mutation_index}/{len(state.mutation_queue)}). {gen_time_ms}ms",
             )
 
         state.syntax_iter = 0
         state.syntax_error_context = None
         total_time = sum(e["time_ms"] for e in state.gen_timings)
         await self._notify(
-            client, Role.Generator,
-            f"All {len(state.mutation_queue)} mutations applied. Total gen time: {total_time}ms"
+            client, Role.Generator, f"All {len(state.mutation_queue)} mutations applied. Total gen time: {total_time}ms"
         )
 
     # ============================================================
     # SECTION 6: Phase 4 — Validation
     # ============================================================
 
-    async def _run_phase_4(
-        self, client: ClientConnection, state: OrchestrationState
-    ) -> None:
+    async def _run_phase_4(self, client: ClientConnection, state: OrchestrationState) -> None:
         """Phase 4: Deterministic Validation (Tier 1 & 2)."""
         await self._notify(
             client,
@@ -787,9 +757,7 @@ class Orchestrator:
                 state.current_phase = 3
                 return
             else:
-                await self._notify(
-                    client, Role.Validator, "Syntax Unrecoverable. Revising strategy."
-                )
+                await self._notify(client, Role.Validator, "Syntax Unrecoverable. Revising strategy.")
                 state.add_feedback(
                     {
                         "failure_tier": FailureTier.TIER_1_SYNTAX,
@@ -803,9 +771,7 @@ class Orchestrator:
                 state.current_phase = 2
                 return
 
-        await self._notify(
-            client, Role.Validator, "Syntax OK. Running Structural Checks..."
-        )
+        await self._notify(client, Role.Validator, "Syntax OK. Running Structural Checks...")
 
         # Step 8: Tier 2 - Structural
         findings = []
@@ -819,16 +785,10 @@ class Orchestrator:
         if cc_rule == "SKIP":
             pass
         elif cc_rule == "EXTRACT_RULE":
-            target_method = state.intent_packet.get("scope_anchor", {}).get(
-                "member", ""
-            )
+            target_method = state.intent_packet.get("scope_anchor", {}).get("member", "")
             if target_method:
-                orig_method_cc = self.validator.get_method_complexity(
-                    state.base_code, target_method
-                )
-                refac_method_cc = self.validator.get_method_complexity(
-                    state.working_code, target_method
-                )
+                orig_method_cc = self.validator.get_method_complexity(state.base_code, target_method)
+                refac_method_cc = self.validator.get_method_complexity(state.working_code, target_method)
                 if orig_method_cc is not None and refac_method_cc is not None:
                     if refac_method_cc > orig_method_cc:
                         findings.append(
@@ -886,9 +846,7 @@ class Orchestrator:
             if state.active_plan["target_class"] not in target_scopes:
                 target_scopes.append(state.active_plan["target_class"])
 
-        boundary_finding = self.validator.verify_boundary(
-            state.base_code, state.working_code, target_scopes
-        )
+        boundary_finding = self.validator.verify_boundary(state.base_code, state.working_code, target_scopes)
         if boundary_finding:
             findings.append(boundary_finding)
 
@@ -897,20 +855,14 @@ class Orchestrator:
         if state.intent_packet:
             intent_enum = RefactorIntent(state.intent_packet["specific_intent"])
             try:
-                intent_finding = self.validator.verify_intent(
-                    intent_enum, state.base_code, state.working_code
-                )
+                intent_finding = self.validator.verify_intent(intent_enum, state.base_code, state.working_code)
             except Exception as e:
                 print(f"  Intent verifier crashed for {intent_enum}: {e}")
                 intent_finding = None
             if intent_finding:
                 findings.append(intent_finding)
 
-        current_cc_val = (
-            current_cc
-            if cc_rule not in ("SKIP", "EXTRACT_RULE")
-            else state.original_complexity
-        )
+        current_cc_val = current_cc if cc_rule not in ("SKIP", "EXTRACT_RULE") else state.original_complexity
         print(
             f"\\n--- Validator Structural Checks ---\\nComplexity Check: {current_cc_val} (Original: {state.original_complexity})\\nBoundary check found issue: {bool(boundary_finding)}\\nIntent check found issue: {bool(intent_finding)}\\nTotal findings: {len(findings)}\\n-----------------------------------"
         )
@@ -985,23 +937,20 @@ class Orchestrator:
         if "class" in base_code:
             return code
         text = code.strip()
-        class_match = re.search(
-            r'(?:public|private|protected|static|abstract|final|\s)*class\s+\w+',
-            text
-        )
+        class_match = re.search(r"(?:public|private|protected|static|abstract|final|\s)*class\s+\w+", text)
         if not class_match:
             return code
-        brace_start = text.find('{', class_match.end())
+        brace_start = text.find("{", class_match.end())
         if brace_start == -1:
             return code
         depth = 0
         for i in range(brace_start, len(text)):
-            if text[i] == '{':
+            if text[i] == "{":
                 depth += 1
-            elif text[i] == '}':
+            elif text[i] == "}":
                 depth -= 1
                 if depth == 0:
-                    inner = text[brace_start + 1:i].strip()
+                    inner = text[brace_start + 1 : i].strip()
                     return inner
         return code
 
@@ -1009,9 +958,7 @@ class Orchestrator:
     # SECTION 7: Phase 5 — Audit (Judge)
     # ============================================================
 
-    async def _run_phase_5(
-        self, client: ClientConnection, state: OrchestrationState
-    ) -> None:
+    async def _run_phase_5(self, client: ClientConnection, state: OrchestrationState) -> None:
         """Phase 5: Heuristic Adjudication (Inference 4)."""
         await self._notify(client, Role.Judge, "Ph5: Running final audit...", phase=5)
         await self.agent_service.swap(self.model_config["judge"])
@@ -1020,10 +967,7 @@ class Orchestrator:
         # 1. Strip imports so parity is consistent
         # 2. Strip outer class wrapper if original had none
         def _normalize_for_judge(code: str) -> str:
-            no_imports = "\n".join(
-                line for line in code.splitlines()
-                if not line.strip().startswith("import ")
-            )
+            no_imports = "\n".join(line for line in code.splitlines() if not line.strip().startswith("import "))
             return self._strip_outer_wrapper(no_imports, state.base_code)
 
         judge_base = _normalize_for_judge(state.base_code)
@@ -1039,9 +983,7 @@ class Orchestrator:
             target_class = scope.get("target_class", "")
             target_method = scope.get("member", "")
 
-        mutations = (
-            state.active_plan.get("ast_mutations", []) if state.active_plan else []
-        )
+        mutations = state.active_plan.get("ast_mutations", []) if state.active_plan else []
         mutation_actions = [m.get("action", "?") for m in mutations]
         mutation_targets = [m.get("target", "?") for m in mutations]
 
@@ -1085,9 +1027,7 @@ class Orchestrator:
                 jheader = "--- Judge Auditor Output ---"
                 if _jattempt > 0:
                     jheader = f"--- Judge Auditor Output (Retry {_jattempt}) ---"
-                print(
-                    f"\n{jheader}\n{audit_text}\n--------------------------"
-                )
+                print(f"\n{jheader}\n{audit_text}\n--------------------------")
                 audit_res = ResponseParser.extract_json(audit_text, StructuralAuditorResponse)
                 break
             except (ValidationError, ValueError):
@@ -1096,10 +1036,12 @@ class Orchestrator:
                     await self.agent_service.clear_context()
                 else:
                     print("  Judge failed on both attempts. Falling back to strategy retry.")
-                    state.add_feedback({
-                        "failure_tier": FailureTier.TIER_3_JUDGE,
-                        "error": "Judge auditor failed to produce valid verdict on both attempts.",
-                    })
+                    state.add_feedback(
+                        {
+                            "failure_tier": FailureTier.TIER_3_JUDGE,
+                            "error": "Judge auditor failed to produce valid verdict on both attempts.",
+                        }
+                    )
                     if not state.strategy_iter_incremented:
                         state.strategy_iter += 1
                         state.strategy_iter_incremented = True
@@ -1133,8 +1075,7 @@ class Orchestrator:
         else:
             await self._notify(client, Role.Judge, "Audit requested revision.")
             state.add_feedback(
-                {"failure_tier": FailureTier.TIER_3_JUDGE,
-                 "error": [i.model_dump() for i in audit_res.issues]}
+                {"failure_tier": FailureTier.TIER_3_JUDGE, "error": [i.model_dump() for i in audit_res.issues]}
             )
             if not state.strategy_iter_incremented:
                 state.strategy_iter += 1
@@ -1153,9 +1094,7 @@ class Orchestrator:
     ) -> None:
         """Phase 6: Finalization & Reporting."""
         # Strip outer wrapper from working_code for final output
-        state.working_code = self._strip_outer_wrapper(
-            state.working_code, state.base_code
-        )
+        state.working_code = self._strip_outer_wrapper(state.working_code, state.base_code)
 
         await self._notify(
             client,
@@ -1164,11 +1103,7 @@ class Orchestrator:
             phase=6,
         )
 
-        final_code = (
-            state.working_code
-            if state.exit_status == ExitStatus.SUCCESS
-            else state.base_code
-        )
+        final_code = state.working_code if state.exit_status == ExitStatus.SUCCESS else state.base_code
 
         # 1. Send immediate result (without insights)
         await client.send_result(
@@ -1197,9 +1132,7 @@ class Orchestrator:
                 print(f"Error generating insights: {e}")
                 insights = "Refactoring successful (Insights generation failed)."
         else:
-            insights = (
-                f"Refactoring aborted: {state.exit_status}. Reverted to original code."
-            )
+            insights = f"Refactoring aborted: {state.exit_status}. Reverted to original code."
 
         # 3. Send insights follow-up
         await client.send_insights(insights)
@@ -1208,9 +1141,7 @@ class Orchestrator:
         self.db.complete_session(
             id=state.session_id,
             refactored_code=final_code,
-            insights=json.dumps(insights)
-            if not isinstance(insights, str)
-            else insights,
+            insights=json.dumps(insights) if not isinstance(insights, str) else insights,
             original_complexity=state.original_complexity,
             refactored_complexity=self.validator.get_complexity(final_code),
             performance_metrics=metrics,
@@ -1270,9 +1201,7 @@ class Orchestrator:
             print(f"Failed to parse insights JSON: {e}")
             return [{"title": "Refactoring Summary", "details": text.strip()}]
 
-    async def run_single_refactor(
-        self, client: ClientConnection, user_code: str, user_instruction: str
-    ) -> None:
+    async def run_single_refactor(self, client: ClientConnection, user_code: str, user_instruction: str) -> None:
         """Single-model refactor using the 7B model. No multi-agent pipeline."""
         cfg = self.model_config["single"]
         prompts = self.prompts["single"]
@@ -1282,8 +1211,10 @@ class Orchestrator:
 
         # Create DB session first so _notify can persist logs
         self.db.create_session(
-            id=client.id, instruction=user_instruction,
-            original_code=user_code, mode="single",
+            id=client.id,
+            instruction=user_instruction,
+            original_code=user_code,
+            mode="single",
         )
 
         await self.agent_service.swap(cfg)
@@ -1293,10 +1224,7 @@ class Orchestrator:
 
         # --- Pass 1: Generate code ---
         await self._notify(client, Role.Monolith, "Generating refactored code...", phase=1)
-        coder_prompt = (
-            f"<code>{user_code}</code>\n\n"
-            f"Instruction: {user_instruction}"
-        )
+        coder_prompt = f"<code>{user_code}</code>\n\nInstruction: {user_instruction}"
         messages = [
             {"role": "system", "content": prompts["coder"]},
             {"role": "user", "content": coder_prompt},
@@ -1310,16 +1238,15 @@ class Orchestrator:
         # --- Pass 2: Generate insights ---
         await self._notify(client, Role.Monolith, "Generating insights...", phase=2)
         await self.agent_service.clear_context()
-        insight_prompt = (
-            f"Original: <code>{user_code}</code>\n"
-            f"Refactored: <code>{refactored}</code>"
-        )
+        insight_prompt = f"Original: <code>{user_code}</code>\nRefactored: <code>{refactored}</code>"
         insight_messages = [
             {"role": "system", "content": prompts["insights"]},
             {"role": "user", "content": insight_prompt},
         ]
         raw2 = await self.agent_service.generate(
-            insight_messages, temp=0.1, max_tokens=1000,
+            insight_messages,
+            temp=0.1,
+            max_tokens=1000,
             response_model=RefactorInsightsResponse,
         )
         insight_text = raw2["choices"][0]["message"].get("content") or ""
@@ -1340,10 +1267,14 @@ class Orchestrator:
         await client.send_insights(insight_dicts)
 
         self.db.complete_session(
-            id=client.id, refactored_code=refactored,
+            id=client.id,
+            refactored_code=refactored,
             insights=json.dumps(insight_dicts),
-            original_complexity=orig_cc, refactored_complexity=refac_cc,
-            performance_metrics=perf, exit_status="SUCCESS", mode="single",
+            original_complexity=orig_cc,
+            refactored_complexity=refac_cc,
+            performance_metrics=perf,
+            exit_status="SUCCESS",
+            mode="single",
         )
 
     @staticmethod
@@ -1373,51 +1304,44 @@ class Orchestrator:
         result = generated
 
         # 1. Strip throws declarations added to method signatures
-        orig_throws = set(_re.findall(r'throws\s+(\w+Exception)', original))
-        gen_throws = set(_re.findall(r'throws\s+(\w+Exception)', result))
+        orig_throws = set(_re.findall(r"throws\s+(\w+Exception)", original))
+        gen_throws = set(_re.findall(r"throws\s+(\w+Exception)", result))
         for exc in gen_throws - orig_throws:
-            result = _re.sub(
-                r'\s*throws\s+' + _re.escape(exc) + r'(?=\s*\{)',
-                '', result
-            )
+            result = _re.sub(r"\s*throws\s+" + _re.escape(exc) + r"(?=\s*\{)", "", result)
 
         # 2. Remove null checks not in original — robust to no-brace bodies
-        orig_null_count = len(_re.findall(r'if\s*\(\s*\w+\s*==\s*null\s*\)', original))
-        gen_null_checks = list(_re.finditer(r'if\s*\(\s*\w+\s*==\s*null\s*\)', result))
+        orig_null_count = len(_re.findall(r"if\s*\(\s*\w+\s*==\s*null\s*\)", original))
+        gen_null_checks = list(_re.finditer(r"if\s*\(\s*\w+\s*==\s*null\s*\)", result))
         extra_nulls = len(gen_null_checks) - orig_null_count
         if extra_nulls > 0:
             for match in reversed(gen_null_checks[-extra_nulls:]):
                 start = match.start()
                 end = start
-                after = result[match.end():]
+                after = result[match.end() :]
                 after_stripped = after.lstrip()
-                if after_stripped.startswith('{'):
+                if after_stripped.startswith("{"):
                     brace_pos = match.end() + (len(after) - len(after_stripped))
                     depth = 0
                     for i in range(brace_pos, len(result)):
-                        if result[i] == '{':
+                        if result[i] == "{":
                             depth += 1
-                        elif result[i] == '}':
+                        elif result[i] == "}":
                             depth -= 1
                             if depth == 0:
                                 end = i + 1
                                 break
                 else:
-                    semicolon = after.find(';')
+                    semicolon = after.find(";")
                     if semicolon >= 0:
                         end = match.end() + semicolon + 1
                 if end > start:
                     result = result[:start] + result[end:]
 
         # 3. Strip 'public' modifier from bare methods that weren't public
-        org_pub_methods = set(_re.findall(r'public\s+\w+\s+(\w+)\s*\(', original))
-        gen_pub_methods = set(_re.findall(r'public\s+\w+\s+(\w+)\s*\(', result))
+        org_pub_methods = set(_re.findall(r"public\s+\w+\s+(\w+)\s*\(", original))
+        gen_pub_methods = set(_re.findall(r"public\s+\w+\s+(\w+)\s*\(", result))
         for method in gen_pub_methods - org_pub_methods:
-            result = _re.sub(
-                r'\bpublic\s+(\w+\s+' + _re.escape(method) + r'\s*\()',
-                r'\1',
-                result
-            )
+            result = _re.sub(r"\bpublic\s+(\w+\s+" + _re.escape(method) + r"\s*\()", r"\1", result)
 
         return result
 
@@ -1452,4 +1376,4 @@ class Orchestrator:
             return
 
         formatted_message = format_agent_output(message, content)
-        await effective.send_status(role=role, content=formatted_message)
+        await effective.send_status(role=role, content=formatted_message, phase=phase)

@@ -22,7 +22,7 @@ class MockClient:
     def is_stale(self) -> bool:
         return False
 
-    async def send_status(self, role, content):
+    async def send_status(self, role, content, **kwargs):
         self.statuses.append((role, content))
 
     async def send_result(self, **kwargs):

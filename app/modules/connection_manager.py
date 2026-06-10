@@ -79,8 +79,11 @@ class ClientConnection:
             "created_at": datetime.utcnow().isoformat() + "Z",
         })
 
-    async def send_status(self, role: Role, content: str) -> None:
-        await self._safe_send({"type": "status", "role": role, "content": content})
+    async def send_status(self, role: Role, content: str, phase: int | None = None) -> None:
+        msg = {"type": "status", "role": role, "content": content}
+        if phase is not None:
+            msg["phase"] = phase
+        await self._safe_send(msg)
 
     async def send_halt_notification(self) -> None:
         await self._safe_send({
