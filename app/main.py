@@ -41,6 +41,9 @@ async def lifespan(app: FastAPI):
     cleaned = connection.db.cleanup_zombie_sessions()
     if cleaned:
         print(f"Cleaned {cleaned} zombie sessions")
+    deleted = connection.db.cleanup_halted_sessions()
+    if deleted:
+        print(f"Deleted {deleted} halted sessions")
     yield
     await agent_service.unload()
 

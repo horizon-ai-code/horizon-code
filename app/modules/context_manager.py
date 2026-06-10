@@ -239,6 +239,16 @@ class DatabaseManager:
             )
             return query.execute()
 
+    def cleanup_halted_sessions(self, max_age_hours: int = 5) -> int:
+        """Deletes halted/interrupted sessions older than max_age_hours."""
+        cutoff = datetime.datetime.now() - datetime.timedelta(hours=max_age_hours)
+        with db.atomic():
+            query = RefactorHistory.delete().where(
+                (RefactorHistory.status == "Halted") &
+                (RefactorHistory.created_at < cutoff)
+            )
+            return query.execute()
+
     def delete_history_by_id(self, id: str) -> bool:
         """
         Deletes a history record and its associated logs.
