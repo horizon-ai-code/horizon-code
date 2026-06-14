@@ -251,7 +251,7 @@ class Orchestrator:
             ]
 
             raw = await self.agent_service.generate(
-                messages,
+                messages,  # type: ignore[arg-type]
                 temp=0.1,
                 max_tokens=500,
                 response_model=IntentClassifierResponse,
@@ -297,7 +297,7 @@ class Orchestrator:
         ]
 
         raw = await self.agent_service.generate(
-            messages,
+            messages,  # type: ignore[arg-type]
             temp=0.1,
             max_tokens=1024,
             response_model=ArchitectAnalysisResponse,
@@ -405,7 +405,7 @@ class Orchestrator:
             temp = 0.2 if _attempt == 0 else 0.5
             try:
                 raw = await self.agent_service.generate(
-                    messages,
+                    messages,  # type: ignore[arg-type]
                     temp=temp,
                     max_tokens=4096,
                     response_model=ASTArchitectResponse,
@@ -520,7 +520,7 @@ class Orchestrator:
         # Multi-sample generation — try 3 temperatures, pick best
         samples: list[dict[str, Any]] = []
         for sample_temp in (retry_temp, 0.3, 0.5) if not state.syntax_error_context else (retry_temp,):
-            raw = await self.agent_service.generate(messages, temp=sample_temp, max_tokens=gen_max_tokens)
+            raw = await self.agent_service.generate(messages, temp=sample_temp, max_tokens=gen_max_tokens)  # type: ignore[arg-type]
             coder_text = raw["choices"][0]["message"].get("content") or ""
             sample_code = ResponseParser.extract_xml(coder_text, "code")
             if sample_code:
@@ -696,7 +696,7 @@ class Orchestrator:
             ]
 
             t0 = _time.time()
-            raw = await self.agent_service.generate(messages, temp=0.1, max_tokens=3072)
+            raw = await self.agent_service.generate(messages, temp=0.1, max_tokens=3072)  # type: ignore[arg-type]
             gen_time_ms = int((_time.time() - t0) * 1000)
 
             coder_text = raw["choices"][0]["message"].get("content") or ""
@@ -1089,7 +1089,7 @@ class Orchestrator:
             jmax = 1500 if _jattempt == 0 else 2048
             try:
                 raw = await self.agent_service.generate(
-                    messages,
+                    messages,  # type: ignore[arg-type]
                     temp=jtemp,
                     max_tokens=jmax,
                     response_model=StructuralAuditorResponse,
@@ -1255,7 +1255,7 @@ class Orchestrator:
         ]
 
         raw_reponse = await self.agent_service.generate(
-            messages=messages,
+            messages=messages,  # type: ignore[arg-type]
             temp=0.1,
             max_tokens=1000,
             stream=False,
@@ -1300,7 +1300,7 @@ class Orchestrator:
             {"role": "system", "content": prompts["coder"]},
             {"role": "user", "content": coder_prompt},
         ]
-        raw = await self.agent_service.generate(messages, temp=0.1, max_tokens=4096)
+        raw = await self.agent_service.generate(messages, temp=0.1, max_tokens=4096)  # type: ignore
         response_text = raw["choices"][0]["message"].get("content") or ""
         refactored = ResponseParser.extract_xml(response_text, "code") or user_code
 
@@ -1315,7 +1315,7 @@ class Orchestrator:
             {"role": "user", "content": insight_prompt},
         ]
         raw2 = await self.agent_service.generate(
-            insight_messages,
+            insight_messages,  # type: ignore
             temp=0.1,
             max_tokens=1000,
             response_model=RefactorInsightsResponse,
