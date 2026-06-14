@@ -1,8 +1,8 @@
 """Run CSR + public-only BER on a benchmark results directory."""
 import json, os, re, subprocess, sys, tempfile
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-from tests.benchmark.benchmark import load_entries, wrap_code, parse_method_info
+sys.path.insert(0, os.path.dirname(__file__))
+from benchmark.benchmark import load_entries, wrap_code, parse_method_info
 
 STUBS_DIR = os.path.join(os.path.dirname(__file__), "stubs")
 JAVAC_FLAGS = ["--release", "25", "-cp", STUBS_DIR]
@@ -188,8 +188,8 @@ def check_entry(e, td):
 def main():
     import argparse
     p = argparse.ArgumentParser()
-    p.add_argument("--dir", default="tests/benchmark/single")
-    p.add_argument("--dataset", default="tests/benchmark/data/dataset_final.json")
+    p.add_argument("--dir", default="benchmark/results/single")
+    p.add_argument("--dataset", default="benchmark/data/dataset_final.json")
     args = p.parse_args()
 
     entries = load_entries(args.dir)

@@ -1,12 +1,12 @@
 """Unified Horizon benchmark tool.
 
 Usage:
-  python3 -m tests.benchmark.benchmark run-multi --dataset <file> --batch N
-  python3 -m tests.benchmark.benchmark run-single --dataset <file> --batch N
-  python3 -m tests.benchmark.benchmark aggregate --dir <results_dir>
-  python3 -m tests.benchmark.benchmark csr --dir <results_dir>
-  python3 -m tests.benchmark.benchmark ber --dir <results_dir> --dataset <file>
-  python3 -m tests.benchmark.benchmark halstead --code <file>
+  python3 -m benchmark.benchmark run-multi --dataset <file> --batch N
+  python3 -m benchmark.benchmark run-single --dataset <file> --batch N
+  python3 -m benchmark.benchmark aggregate --dir <results_dir>
+  python3 -m benchmark.benchmark csr --dir <results_dir>
+  python3 -m benchmark.benchmark ber --dir <results_dir> --dataset <file>
+  python3 -m benchmark.benchmark halstead --code <file>
 """
 import argparse
 import asyncio
@@ -251,7 +251,7 @@ def _build_shared_parser() -> argparse.ArgumentParser:
 
     # run-multi
     rm = sub.add_parser("run-multi", help="Run multi-agent pipeline")
-    rm.add_argument("--dataset", type=str, default="tests/benchmark/data/dataset_final.json")
+    rm.add_argument("--dataset", type=str, default="benchmark/data/dataset_final.json")
     rm.add_argument("--batch", type=int, default=None)
     rm.add_argument("--batch-size", type=int, default=50)
     rm.add_argument("--start", type=int, default=None)
@@ -261,7 +261,7 @@ def _build_shared_parser() -> argparse.ArgumentParser:
 
     # run-single
     rs = sub.add_parser("run-single", help="Run single-model baseline")
-    rs.add_argument("--dataset", type=str, default="tests/benchmark/data/dataset_final.json")
+    rs.add_argument("--dataset", type=str, default="benchmark/data/dataset_final.json")
     rs.add_argument("--batch", type=int, default=None)
     rs.add_argument("--batch-size", type=int, default=50)
     rs.add_argument("--start", type=int, default=None)
@@ -280,7 +280,7 @@ def _build_shared_parser() -> argparse.ArgumentParser:
     # ber
     be = sub.add_parser("ber", help="Behavioral equivalence rate (needs JDK)")
     be.add_argument("--dir", type=str, default=os.path.join(HERE, "results", "multi"))
-    be.add_argument("--dataset", type=str, default="tests/benchmark/data/dataset_final.json")
+    be.add_argument("--dataset", type=str, default="benchmark/data/dataset_final.json")
 
     # halstead
     ha = sub.add_parser("halstead", help="Halstead metrics for a Java file")
