@@ -2,17 +2,19 @@
 
 Covers: Pydantic v2 ConfigDict, insights type annotation.
 """
+
 import unittest
 from datetime import datetime
 from uuid import uuid4
-from app.utils.schemas import ScopeAnchor, HistoryDetail, LogEntry
+
+from app.utils.schemas import HistoryDetail, LogEntry, ScopeAnchor
 from app.utils.types import Role
 
 
 class TestScopeAnchorClassAlias(unittest.TestCase):
     def test_scope_anchor_class_alias(self):
         """ScopeAnchor accepts 'class' as an alias for target_class."""
-        anchor = ScopeAnchor(**{"class": "MyClass", "unit_type": "METHOD_UNIT"})
+        anchor = ScopeAnchor(**{"class": "MyClass", "unit_type": "METHOD_UNIT"})  # type: ignore
         self.assertEqual(anchor.target_class, "MyClass")
 
 
