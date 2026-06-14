@@ -1,14 +1,15 @@
 """Verification tests for schemas.py changes.
 
-Covers: Pydantic v2 ConfigDict, insights type annotation.
+Covers: Pydantic v2 ConfigDict, insights type annotation,
+        ASTMutationDetails scope field for ADD_DECLARATION.
 """
 
 import unittest
 from datetime import datetime
 from uuid import uuid4
 
-from app.utils.schemas import HistoryDetail, LogEntry, ScopeAnchor
-from app.utils.types import Role
+from app.utils.schemas import ASTMutation, ASTMutationDetails, HistoryDetail, LogEntry, ScopeAnchor
+from app.utils.types import DeclarationScope, MutationAction, Role
 
 
 class TestScopeAnchorClassAlias(unittest.TestCase):
@@ -30,3 +31,34 @@ class TestHistoryDetailInsightsType(unittest.TestCase):
             logs=[LogEntry(role=Role.System, status="test", created_at=datetime.now())],
         )
         self.assertIsInstance(detail.insights, str)
+
+
+class TestMutationDetailsScope(unittest.TestCase):
+    def test_scope_field_exists(self):
+        """ASTMutationDetails accepts scope: DeclarationScope."""
+        details = ASTMutationDetails(
+            type="boolean",
+            scope=DeclarationScope.LOCAL,
+            value="true",
+        )
+        self.assertEqual(details.scope, DeclarationScope.LOCAL)
+
+    def test_scope_nullable(self):
+        """ASTMutationDetails scope is None by default."""
+        details = ASTMutationDetails(type="boolean")
+        self.assertIsNone(details.scope)
+
+    def test_mutation_with_add_declaration(self):
+        """Full mutation using ADD_DECLARATION with scope."""
+        details = ASTMutationDetails(
+            type="boolean",
+            scope=DeclarationScope.LOCAL,
+            body_abstract="Declare local boolean variable",
+        )
+        mutation = ASTMutation(
+            action=MutationAction.ADD_DECLARATION,
+            target="isMatch",
+            details=details,
+        )
+        self.assertEqual(mutation.action, MutationAction.ADD_DECLARATION)
+        self.assertEqual(mutation.details.scope, DeclarationScope.LOCAL)
