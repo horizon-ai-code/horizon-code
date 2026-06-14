@@ -10,6 +10,11 @@ from app.utils.types import Role
 
 
 class TestMainHalt(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        """Fresh mocks for each test to prevent singleton app state leaks."""
+        import app.main as main
+        main.orchestrator = MagicMock()
+        main.agent = MagicMock()
 
     async def test_halt_cancels_active_task(self):
         """
