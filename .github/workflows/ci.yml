@@ -24,6 +24,6 @@ jobs:
       - name: Type check
         run: mypy app/ --ignore-missing-imports
       - name: Test
-        run: >-
-          pytest tests/unit/ -v --tb=short
-          -k "not test_performance_edge and not test_performance_tracker and not test_halt_cancels_active_task"
+        run: |
+          mkdir -p db
+          pytest tests/unit/ -v --tb=short -k "not test_performance_edge and not test_performance_tracker and not test_halt_cancels_active_task"
