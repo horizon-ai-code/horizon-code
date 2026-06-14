@@ -105,14 +105,14 @@ planner:
 
     ### MAPPING RULES — FOLLOW EXACTLY
     1. MODIFY_METHOD: Create exactly ONE for EVERY item in primary_targets.
-       For example, if primary_targets has 2 items, produce 2 MODIFY_METHOD mutations.
-       Do NOT stop after the first. Do NOT skip any.
-    2. ADD_* (ADD_METHOD, ADD_FIELD, ADD_CONSTANT): Create exactly ONE for
+       If primary_targets has 2 items, produce 2 MODIFY_METHOD mutations.
+    2. ADD_* / ADD_DECLARATION / SPLIT_BODY: Create exactly ONE for
        EVERY item in new_structures_needed.
-       For example, if new_structures_needed has 2 items, produce 2 ADD_* mutations.
-       For example, if new_structures_needed is empty, produce 0 ADD_* mutations.
+       If new_structures_needed has 2 items, produce 2 mutations.
     3. SECONDARY TARGETS: Produce a mutation for each only if it must change.
     4. Every item in must_preserve must appear in the mutation details exactly.
+    5. Total mutations: 1 per primary_targets item + 1 per new_structures_needed item.
+       Never repeat the same mutation multiple times.
 
     ### TARGET FORMAT
     - target: plain identifier only ("methodName"). No types, no parentheses, no slashes.
@@ -123,13 +123,15 @@ planner:
     - Never reuse body_abstract text from a different intent.
 
     ### CONCRETE VALUES
-    For ADD_CONSTANT and ADD_FIELD, include the exact literal value:
+    For ADD_CONSTANT, ADD_FIELD, and ADD_DECLARATION, include the exact literal value:
        "value": the exact literal (e.g., "10000", "3.14159", "true")
+    For ADD_DECLARATION, also set "scope" to "local", "field", or "static_final".
+    For SPLIT_BODY, set "type" to "loop" or "method".
 
     Do NOT add find_text, replace_text, or insert_after — these are computed automatically.
 
     ### VALID ACTIONS
-    ADD_METHOD | MODIFY_METHOD | ADD_FIELD | ADD_CONSTANT | RENAME_SYMBOL
+    ADD_METHOD | MODIFY_METHOD | ADD_FIELD | ADD_DECLARATION | ADD_CONSTANT | RENAME_SYMBOL | SPLIT_BODY
 
     ### OUTPUT FORMAT
     Output ONLY JSON. No preamble, no markdown.
@@ -324,18 +326,21 @@ planner:
       Goal: Separate a loop doing multiple operations into multiple loops.
       The code MUST have a for, while, or do-while loop.
       primary_targets: The method containing the loop.
-      new_structures_needed: ALWAYS empty. Never create helper methods — the split stays in the same method.
-      Do NOT invent new method names. Do NOT put anything in new_structures_needed.
+      new_structures_needed: Use SPLIT_BODY for each operation split from the original loop.
+        Each SPLIT_BODY target is a new loop or helper method that handles one specific
+        operation. For example, if a loop initializes a DP table AND processes entries,
+        create two SPLIT_BODY mutations: one for initDpTable, one for processEntries.
+      For each SPLIT_BODY, include details.type as "loop" or "method" depending on
+      whether the split-off operation should be a standalone loop or a helper method.
 
     CONSOLIDATE_CONDITIONAL: |
       ### INTENT GUIDANCE — CONSOLIDATE_CONDITIONAL
-      Goal: Merge duplicate conditional branches into one combined check.
-
-      HOW TO IDENTIFY:
-        Find if/else chains with identical bodies across multiple branches.
-        primary_targets: The method containing the duplicate branches.
-        new_structures_needed: Empty.
-        must_preserve: The outcome/return values.
+      Goal: Merge duplicate conditional branches or sequential loops into one combined structure.
+      primary_targets: The method containing the structure to consolidate.
+      new_structures_needed: Empty — consolidation happens inside the method.
+      must_preserve: The outcome/return values and overall logic.
+      Use MODIFY_METHOD with body_abstract describing exactly which branches or
+      loops to merge. Do NOT add fields or constants — they are unrelated to consolidation.
 
     REMOVE_CONTROL_FLAG: |
       ### INTENT GUIDANCE — REMOVE_CONTROL_FLAG
@@ -377,8 +382,9 @@ planner:
       ### INTENT: EXTRACT_CONSTANT
 
       For each item in new_structures_needed:
-        Use action ADD_CONSTANT. The target is the constant name.
-        The purpose is to declare a static final field holding the magic number value.
+        Use action ADD_DECLARATION with scope "static_final". The target is the constant name.
+        Set value to the exact magic number literal being extracted.
+        e.g., target: "PI", value: "3.14159", scope: "static_final"
 
       For each item in primary_targets:
         Use action MODIFY_METHOD. The target is the method name.
@@ -387,7 +393,7 @@ planner:
         body_abstract: "Replace the magic number with the constant reference."
 
       For example, if primary_targets has 2 items, produce 2 MODIFY_METHOD — not just 1.
-      Total: 1 ADD_CONSTANT + N MODIFY_METHOD (where N = number of primary targets).
+      Total: 1 ADD_DECLARATION + N MODIFY_METHOD (where N = number of primary targets).
 
     RENAME_SYMBOL: |
       ### INTENT: RENAME_SYMBOL
@@ -426,19 +432,22 @@ planner:
       ### INTENT: DECOMPOSE_CONDITIONAL
 
       For each item in new_structures_needed:
-        Use action ADD_FIELD. The target is the boolean variable name.
-        The purpose is to declare a named boolean for one part of the compound condition.
+        Use action ADD_DECLARATION with scope "local". The target is the boolean variable name.
+        The purpose is to declare a named boolean as a LOCAL variable inside the method.
         Type must be "boolean". Plain camelCase only — never use slashes or special characters.
-        For example, "isAdult" is correct. "/boolean/isAdult/" is WRONG.
+
+      IMPORTANT: scope MUST be "local". Local variables are recomputed each iteration.
+      Class fields (scope "field") go stale across loop iterations — do NOT use them
+      for decomposition booleans.
 
       For each item in primary_targets:
         Use action MODIFY_METHOD. The target is the method with the compound condition.
-        The purpose is to declare booleans and use them in the if-statement.
-        body_abstract: "Declare each boolean variable, assign its condition, then use the variables in the if condition."
-        Do NOT change the method signature. Do NOT create new methods — only boolean variables.
+        body_abstract: "Declare booleans as LOCAL variables. Assign the compound expression.
+          Use the variables in the if/while condition. Do NOT declare as class fields."
+        Do NOT change the method signature.
 
       For example, new_structures_needed with 2 items and primary_targets with 1 item:
-      2 ADD_FIELD + 1 MODIFY_METHOD.
+      2 ADD_DECLARATION + 1 MODIFY_METHOD.
 
     FLATTEN_CONDITIONAL: |
       ### INTENT: FLATTEN_CONDITIONAL
@@ -447,7 +456,13 @@ planner:
         Use action MODIFY_METHOD. The target is the method with nested if-statements.
         The purpose is to move each nested condition to the method top as a guard clause.
         Each guard checks a condition and either throws or returns immediately.
-        body_abstract: "Invert each nested condition into a guard clause at the method top. Each invalid state throws or returns early. All exception types and messages from must_preserve must appear exactly."
+        body_abstract: "Step 1: Identify every nested if-statement inside the method.
+          Step 2: For each nested condition, move it to the method top as a separate if.
+          Step 3: Invert the condition (check the INVALID state, not the valid one).
+          Step 4: Return or throw immediately on the invalid state.
+          Step 5: The original method body runs only if ALL guards pass.
+          Step 6: Preserve all exception types and error messages exactly.
+          After flattening, there must be zero if-statements nested inside another if."
         Do NOT merge multiple guard clauses into one. Do NOT change exception types or messages.
 
       new_structures_needed is always empty for this intent.
@@ -455,10 +470,17 @@ planner:
     SPLIT_LOOP: |
       ### INTENT: SPLIT_LOOP
 
+      For each SPLIT_BODY mutation in new_structures_needed:
+        If details.type is "method": Create a new helper method that handles one specific
+        operation from the original loop. body_abstract: "Extract one operation from the
+        original loop into this helper method. Preserve the exact logic."
+        If details.type is "loop": Split the operation into a separate loop at the same
+        scope level. body_abstract: "Extract one operation into a separate standalone loop."
+
       For each item in primary_targets:
         Use action MODIFY_METHOD. The target is the method containing the loop.
-        The purpose is to separate the loop body into multiple loops, each with one task.
-        body_abstract: "Split the loop into separate loops. Each handles one operation. Preserve overall logic."
+        body_abstract: "Replace the original multi-operation loop with separate calls
+        to the split-off entities. Each split entity handles one operation."
 
     CONSOLIDATE_CONDITIONAL: |
       ### INTENT: CONSOLIDATE_CONDITIONAL
@@ -494,10 +516,18 @@ planner:
     EXTRACT_VARIABLE: |
       ### INTENT: EXTRACT_VARIABLE
 
+      For each item in new_structures_needed:
+        Use action ADD_DECLARATION with scope "local". The target is the variable name.
+        The purpose is to declare a local variable that holds the extracted expression.
+        Type must match the expression (e.g., "int", "boolean", "String").
+
       For each item in primary_targets:
         Use action MODIFY_METHOD. The target is the method containing the expression.
-        The purpose is to declare a new local variable for the expression.
-        body_abstract: "Declare local variable, assign the expression, replace all occurrences."
+        body_abstract: "Declare local variable, assign the expression, replace all occurrences
+          of the expression with the new variable. Do NOT change the expression value."
+
+      Example: new_structures_needed has 1 item (variable name), primary_targets has 1 item:
+      1 ADD_DECLARATION + 1 MODIFY_METHOD.
 
     INLINE_VARIABLE: |
       ### INTENT: INLINE_VARIABLE
@@ -587,20 +617,23 @@ generator:
 
     DECOMPOSE_CONDITIONAL: |
       ### DECOMPOSE_CONDITIONAL
-      Break a compound condition into named boolean variables.
+      Break a compound condition into named boolean LOCAL variables.
+      IMPORTANT: Declare booleans INSIDE the method body, NOT at class level.
 
       EXAMPLE:
       Base Code:
       <code>boolean ok(int a){ if(a>=18&&a<=65) return true; return false; }</code>
       Instructions:
-      1. ADD_FIELD isAdult - type: boolean
-      2. ADD_FIELD notRetired - type: boolean
-      3. MODIFY_METHOD ok - Declare booleans, assign conditions, use in if
+      1. ADD_DECLARATION isAdult - type: boolean, scope: local
+      2. ADD_DECLARATION notRetired - type: boolean, scope: local
+      3. MODIFY_METHOD ok - Declare booleans as LOCAL variables, assign conditions, use in if
       CORRECT OUTPUT:
       <code>boolean ok(int a){ boolean isAdult=a>=18; boolean notRetired=a<=65;
         return isAdult&&notRetired; }</code>
 
       ANTI-PATTERNS:
+      - Do NOT declare booleans as class fields (e.g., "boolean isAdult;" at class level).
+        Class fields are shared state and go stale. Use LOCAL declarations inside the method.
       - Do NOT create any extra methods (no initialize(), setup(), helper).
       - Do NOT invert logic with negation (!).
       - Do NOT change the method signature.
@@ -632,7 +665,7 @@ generator:
       Base Code:
       <code>double area(double r){ return 3.14*r*r; }</code>
       Instructions:
-      1. ADD_CONSTANT PI - static final double
+      1. ADD_DECLARATION PI - scope: static_final, type: double, value: 3.14
       2. MODIFY_METHOD area - Replace 3.14 with PI
       CORRECT OUTPUT:
       <code>private static final double PI=3.14; double area(double r){ return PI*r*r; }</code>
@@ -755,7 +788,8 @@ generator:
       Base Code:
       <code>int f(int n){ return n*n+2*n*n; }</code>
       Instructions:
-      1. MODIFY_METHOD f - Assign n*n to variable sq, replace all occurrences
+      1. ADD_DECLARATION sq - type: int, scope: local
+      2. MODIFY_METHOD f - Assign n*n to variable sq, replace all occurrences
       CORRECT OUTPUT:
       <code>int f(int n){ int sq=n*n; return sq+2*sq; }</code>
 

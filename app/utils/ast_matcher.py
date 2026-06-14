@@ -31,7 +31,13 @@ class ASTMatcher:
             elif action == "ADD_FIELD":
                 ASTMatcher._enrich_add_field(code, details, target, body)
 
+            elif action == "ADD_DECLARATION":
+                ASTMatcher._enrich_add_declaration(code, details, target, body)
+
             elif action == "ADD_METHOD":
+                ASTMatcher._enrich_add_method(code, details, target, body)
+
+            elif action == "SPLIT_BODY":
                 ASTMatcher._enrich_add_method(code, details, target, body)
 
             elif action == "MODIFY_METHOD":
@@ -128,6 +134,23 @@ class ASTMatcher:
     ) -> None:
         """Enrich ADD_FIELD with insert_after."""
         if not details.get("insert_after"):
+            decl = ASTMatcher._find_class_declaration_line(code)
+            if decl:
+                details["insert_after"] = decl
+
+    @staticmethod
+    def _enrich_add_declaration(
+        code: str,
+        details: dict[str, Any],
+        target: str,
+        body: str,
+    ) -> None:
+        """Enrich ADD_DECLARATION with insert_after based on scope."""
+        scope = details.get("scope", "local")
+        if scope == "local":
+            # Local variable — no insert_after needed, generated inline
+            details["insert_after"] = target
+        elif not details.get("insert_after"):
             decl = ASTMatcher._find_class_declaration_line(code)
             if decl:
                 details["insert_after"] = decl

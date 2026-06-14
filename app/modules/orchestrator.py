@@ -121,7 +121,7 @@ class Orchestrator:
             action = m.get("action", "")
             if action == "RENAME_SYMBOL":
                 return 0
-            if action.startswith("ADD_"):
+            if action.startswith("ADD_") or action == "SPLIT_BODY":
                 return 1
             if action in ("MODIFY_METHOD", "REMOVE_METHOD"):
                 return 2
@@ -332,6 +332,62 @@ class Orchestrator:
         )
         if state.cumulative_feedback:
             arch_prompt += f"\n\n### PREVIOUS ATTEMPT FEEDBACK\n{json.dumps(state.cumulative_feedback, indent=2)}"
+            # Translate failure tiers into actionable suggestions
+            suggestions = []
+            for fb in state.cumulative_feedback:
+                tier = str(fb.get("failure_tier", ""))
+                err = str(fb.get("error", "") or fb.get("error_report", {}).get("message", ""))
+                if "INTENT_MATH" in tier:
+                    if "conditional" in err.lower() or "consolidat" in err.lower():
+                        suggestions.append(
+                            "- INTENT_MATH FAILED: Conditional count did not change. "
+                            "Try a different approach to consolidation — merge the loop bodies "
+                            "into a single pass rather than keeping them separate. "
+                            "Use MODIFY_METHOD with a specific body_abstract describing the merge."
+                        )
+                    elif "loop" in err.lower() or "split" in err.lower():
+                        suggestions.append(
+                            "- INTENT_MATH FAILED: Loop count did not increase. "
+                            "Create explicit separate methods or loops using SPLIT_BODY "
+                            "for each operation you want to split from the original loop."
+                        )
+                    elif "nesting" in err.lower() or "flatten" in err.lower():
+                        suggestions.append(
+                            "- INTENT_MATH FAILED: Nesting depth did not decrease. "
+                            "Move nested conditions to the method top as guard clauses "
+                            "using early return/throw. Invert the conditions."
+                        )
+                    elif "variable" in err.lower() or "extract" in err.lower():
+                        suggestions.append(
+                            "- INTENT_MATH FAILED: Variable/constant count did not change. "
+                            "Use ADD_DECLARATION with scope='local' for variables "
+                            "or scope='static_final' for constants. Declare before use."
+                        )
+                    else:
+                        suggestions.append(
+                            "- INTENT_MATH FAILED: The structural changes were not detected. "
+                            "Try a different mutation strategy — change scope (local vs field), "
+                            "use ADD_DECLARATION or SPLIT_BODY instead of ADD_FIELD."
+                        )
+                elif "COMPLEXITY" in tier:
+                    suggestions.append(
+                        "- CC INCREASED: Reduce unnecessary class-level fields or helper methods. "
+                        "Use local variables inside the method body instead. "
+                        f"Original CC was {state.original_complexity}."
+                    )
+                elif "BOUNDARY" in tier:
+                    suggestions.append(
+                        "- BOUNDARY VIOLATION: A method outside the target scope was modified. "
+                        "Restrict ALL mutations to only the methods listed in primary_targets. "
+                        "Do not touch any other method."
+                    )
+                elif "SYNTAX" in tier:
+                    suggestions.append(
+                        "- SYNTAX ERROR: Generated code had invalid Java syntax. "
+                        "Ensure all braces, semicolons, and type declarations are correct."
+                    )
+            if suggestions:
+                arch_prompt += "\n\n### HOW TO FIX\n" + "\n".join(suggestions)
 
         system_content = self.prompts["planner"]["architect"]
         if state.intent_packet:
@@ -360,7 +416,13 @@ class Orchestrator:
                     header = f"--- Planner Architect Output (Retry {_attempt}) ---"
                 print(f"\n{header}\n{arch_text}\n------------------------------")
                 architect_res = ResponseParser.extract_json(arch_text, ASTArchitectResponse)
-                state.active_plan = architect_res.ast_modification_plan.model_dump()
+                plan = architect_res.ast_modification_plan.model_dump()
+                # Defensive cap: never execute >20 mutations (Architect hallucination guard)
+                mutations = plan.get("ast_mutations", [])
+                if len(mutations) > 20:
+                    plan["ast_mutations"] = mutations[:10]
+                    print(f"  WARNING: Architect generated {len(mutations)} mutations — truncated to 10")
+                state.active_plan = plan
                 break
             except (ValidationError, ValueError):
                 if _attempt == 0:
@@ -618,6 +680,15 @@ class Orchestrator:
                 f"\nOutput ONLY the complete updated code in <code> tags. "
                 f"Do NOT change anything except this mutation."
             )
+
+            if state.syntax_error_context:
+                ctx = state.syntax_error_context
+                user_prompt += (
+                    f"\n\n### PREVIOUS ATTEMPT FAILED (Attempt {ctx['attempt']}/3)\n"
+                    f"Error: {ctx['error']}\n"
+                    f"Broken code:\n<code>{ctx['broken_code'][:2000]}</code>\n\n"
+                    f"Fix the error above in this attempt."
+                )
 
             messages: list[ChatCompletionRequestMessage] = [
                 {"role": "system", "content": system_content},
@@ -1282,7 +1353,7 @@ class Orchestrator:
         """Returns the CC rule for an intent: STRICT, LOOSENED, SKIP, or EXTRACT_RULE."""
         rules: dict[RefactorIntent, str] = {
             RefactorIntent.FLATTEN_CONDITIONAL: "LOOSENED",
-            RefactorIntent.DECOMPOSE_CONDITIONAL: "STRICT",
+            RefactorIntent.DECOMPOSE_CONDITIONAL: "EXTRACT_RULE",
             RefactorIntent.CONSOLIDATE_CONDITIONAL: "STRICT",
             RefactorIntent.REMOVE_CONTROL_FLAG: "STRICT",
             RefactorIntent.REPLACE_LOOP_WITH_PIPELINE: "STRICT",
@@ -1376,4 +1447,4 @@ class Orchestrator:
             return
 
         formatted_message = format_agent_output(message, content)
-        await effective.send_status(role=role, content=formatted_message, phase=phase)
+        await effective.send_status(role=role, content=formatted_message)

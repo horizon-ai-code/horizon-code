@@ -96,12 +96,20 @@ class FailureTier(str, Enum):
     TIER_3_JUDGE = "TIER_3_JUDGE"
 
 
+class DeclarationScope(str, Enum):
+    LOCAL = "local"
+    FIELD = "field"
+    STATIC_FINAL = "static_final"
+
+
 class MutationAction(str, Enum):
     ADD_METHOD = "ADD_METHOD"
     REMOVE_METHOD = "REMOVE_METHOD"
     MODIFY_METHOD = "MODIFY_METHOD"
     ADD_FIELD = "ADD_FIELD"
+    ADD_DECLARATION = "ADD_DECLARATION"
     REMOVE_FIELD = "REMOVE_FIELD"
     ADD_CONSTANT = "ADD_CONSTANT"
     ADD_ENUM = "ADD_ENUM"
     RENAME_SYMBOL = "RENAME_SYMBOL"
+    SPLIT_BODY = "SPLIT_BODY"

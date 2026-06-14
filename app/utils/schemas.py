@@ -4,6 +4,7 @@ from typing import Any, Literal
 from pydantic import UUID4, BaseModel, ConfigDict, Field
 
 from .types import (
+    DeclarationScope,
     FailureTier,
     MutationAction,
     RefactorCategory,
@@ -89,11 +90,12 @@ class IntentClassifierResponse(BaseModel):
 class ASTMutationDetails(BaseModel):
     modifiers: list[str] = []
     type: str | None = None
+    scope: DeclarationScope | None = None
     parameters: list[dict[str, str]] = []
     logic_changes: list[str] = []
     body_abstract: str | None = None
 
-    # Atomic value for ADD_CONSTANT / ADD_FIELD (safe single field)
+    # Atomic value for ADD_CONSTANT / ADD_FIELD / ADD_DECLARATION
     value: str | None = None           # e.g., "10000", "3.14159", "true"
 
 
@@ -105,7 +107,7 @@ class ASTMutation(BaseModel):
 
 class ASTModificationPlan(BaseModel):
     target_class: str
-    ast_mutations: list[ASTMutation]
+    ast_mutations: list[ASTMutation] = Field(max_length=5)
 
 
 class ASTArchitectResponse(BaseModel):
