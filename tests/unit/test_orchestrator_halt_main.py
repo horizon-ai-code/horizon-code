@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 import unittest
 from unittest.mock import AsyncMock, patch, MagicMock
 
@@ -32,19 +33,19 @@ class TestMainHalt(unittest.IsolatedAsyncioTestCase):
                 websocket.send_json({"type": "halt"})
 
                 messages = []
-                try:
-                    for _ in range(5):
+                halt_found = False
+                timeout = 3.0
+                start = time.time()
+                while time.time() - start < timeout:
+                    try:
                         msg = websocket.receive_json()
                         messages.append(msg)
                         if msg.get("type") == "status" and "halted" in msg.get("content", "").lower():
+                            halt_found = True
                             break
-                except Exception:
-                    pass
+                    except Exception:
+                        break
 
-                halt_found = any(
-                    "halted" in msg.get("content", "").lower() 
-                    for msg in messages if msg.get("type") == "status"
-                )
                 self.assertTrue(halt_found, f"Halt notification not found in messages: {messages}")
 
     async def test_normal_orchestration_success(self):
