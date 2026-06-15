@@ -780,7 +780,7 @@ def cmd_report(args: argparse.Namespace) -> None:
         status = e.get("status", "FAIL")
         exit_st = e.get("exit_status", "?")
         dur = e.get("duration_ms", 0)
-        unchanged = e.get("code_unchanged", False)
+        unchanged = e.get("final_code", "").strip() == e.get("original_code", "").strip()
         orig_cc = e.get("original_cc", 0)
         refa_cc = e.get("refactored_cc", 0)
         cc_delta = e.get("cc_delta", 0)
@@ -788,7 +788,7 @@ def cmd_report(args: argparse.Namespace) -> None:
         # Halstead MI
         final_code = e.get("final_code", "")
         _, orig_mi = compute_mi(e.get("original_code", ""), orig_cc)
-        _, refa_mi = compute_mi(final_code, refa_cc) if not unchanged and final_code.strip() else (None, orig_mi)
+        _, refa_mi = compute_mi(final_code, refa_cc) if final_code.strip() else (None, orig_mi)
         mi_delta = round(refa_mi - orig_mi, 2)
 
         # Multi-only fields
@@ -820,7 +820,7 @@ def cmd_report(args: argparse.Namespace) -> None:
 
         # CSR + BER (integrated — single compilation pass when both requested)
         csr_pass = ber_val = pub_p = priv_p = "-"
-        if not final_code.strip() or unchanged:
+        if not final_code.strip():
             pass
         elif args.ber and args.dataset:
             # BER with test wrapper — also serves as CSR check
@@ -947,12 +947,12 @@ def _check_entry_ber(entry: dict, dataset_entry: dict | None) -> dict:
     """Run CSR + public BER for one entry. Returns {csr, ber, has_input, unchanged}."""
     num = entry.get("num", 0)
     final = entry.get("final_code", "")
-    unchanged = entry.get("code_unchanged", False)
+    unchanged = entry.get("final_code", "").strip() == entry.get("original_code", "").strip()
     csr_ok = False
     ber_ok = False
     pub_in = None
 
-    if not unchanged and final:
+    if final:
         wrapped = wrap_code(final)
         with tempfile.NamedTemporaryFile(mode='w', suffix='.java', delete=False) as f:
             f.write(wrapped)
