@@ -145,6 +145,8 @@ sections.push({
     bodyPara("BER: Multi 12.4% vs. Single 11.0%. The multi-agent system \u2014 using models less than half the size of the baseline \u2014 achieves superior behavioral equivalence. This is the headline result. On specific intents, Multi dominates: EXTRACT_CONSTANT (40.0% vs. 28.6%), INLINE_METHOD (20.0% vs. 0.0%), RENAME_SYMBOL (17.4% vs. 10.3%)."),
     bodyPara("Cyclomatic Complexity: Comparable. Multi shows tighter output variance (\u00B10.96 vs. \u00B11.30), suggesting the pipeline filters out extreme outputs. Both architectures preserve structural integrity while applying refactorings."),
     bodyPara("Maintainability Index: Comparable. Minor fluctuations within normal variance (Multi -2.05 vs. Single -1.70). Multi avoids extreme MI drops seen in the single model (min -25.46 vs. -68.39)."),
+    bodyPara("System Features: The multi-agent pipeline uses 3 agents across 2 model sets (6B total) vs. Single's 7B monolithic approach. The deterministic validation pipeline intercepts 45.5% of runs (intent-math dominant at 27.6%). First-pass strategy convergence is 78.3%; the retry mechanism rescues 34.7% of failed runs. Syntax errors are near-fatal (7.1% resolve); judge flags are most survivable (72.0%)."),
+    bodyPara("Computational Efficiency: Multi is 3.7\u00D7 slower (75.8s vs 20.4s per SUCCESS run) but uses 19.8% less VRAM (3,108 MB vs 3,877 MB). Both differences are overwhelmingly significant (Wilcoxon p < 10\u207B\u00B3\u00B3 on 195 paired SUCCESS tasks)."),
     bodyPara("Overall: The multi-agent 3B system punches above its weight class. On behavioral equivalence \u2014 the most stringent quality test \u2014 it exceeds the 7B baseline. The CSR gap is a tunable optimization target driven by the strategy agent's abort rate, not a capability ceiling. Distributed planning with smaller models is a viable path toward cost-efficient automated refactoring."),
     new Paragraph({ children: [new PageBreak()] })
   ]
@@ -380,6 +382,142 @@ sections.push({
   ]
 });
 
+// ═══ RESULTS: SYSTEM FEATURES ═══
+sections.push({
+  properties: {
+    page: {
+      size: { width: 12240, height: 15840 },
+      margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 }
+    }
+  },
+  children: [
+    new Paragraph({ children: [new PageBreak()] }),
+    sectionHeading("4. System Feature Analysis"),
+
+    subHeading("4.1 Parameter Distribution"),
+    bodyPara("The multi-agent system distributes refactoring across three specialist agents using two distinct 3B-parameter models, totalling 6B parameters. The single baseline uses one 7B-parameter model with no orchestration."),
+
+    ...metricTable("Architecture Comparison", ["Property", "Single (7B)", "Multi (3B\u00D7N)"], [
+      ["Logical Agents", "1 (Monolith)", "3 (Planner, Generator, Judge)"],
+      ["Distinct Model Sets", "1", "2 (Qwen 3B + Llama 3B)"],
+      ["Total Parameters", "7B", "6B"],
+      ["Max Single Model", "7B", "3B"],
+      ["Avg Inference Calls/Run", "1", "2.3 (SUCCESS-only)"]
+    ], [3120, 3120, 3120], false),
+    chartImage("tier/parameter_distribution.png", 420, 280),
+
+    bodyPara("Planner and Generator share the same Qwen2.5-Coder-3B-Instruct model weights; the Judge uses Llama-3.2-3B-Instruct. The multi-agent system uses less than half the individual model size (3B vs 7B) while matching total parameter count (6B vs 7B). The cost is increased inference calls: Multi averages 2.3 calls per SUCCESS run versus Single's single pass."),
+
+    subHeading("4.2 Validation Interception Rate"),
+    bodyPara("The multi-agent pipeline includes a deterministic validation layer (tiered checks: syntax, complexity, boundary, intent-math, judge) that intercepts outputs before finalization. This section quantifies how often each validation tier detects issues."),
+
+    bodyPara("RAW interception (all 279 entries): 45.5% of runs trigger at least one validation tier. The dominant detection gate is intent-math (27.6%), which checks whether the refactoring preserved the intended structural transformation."),
+
+    ...metricTable("Validation Interception (RAW, %)", ["Tier", "Interception %"], [
+      ["Syntax", "5.0"],
+      ["Cyclomatic Complexity", "3.9"],
+      ["Boundary", "7.2"],
+      ["Intent Math", "27.6"],
+      ["Judge", "9.0"],
+      ["Any Tier", "45.5"]
+    ], [4680, 4680], false),
+    chartImage("tier/tier_interception_overall.png", 420, 280),
+
+    bodyPara("On SUCCESS-only runs (n=198), 15.2% had non-fatal tier issues that were detected but eventually resolved or overridden. On ABORT_STRATEGY runs (n=81), 67.9% were caught by intent-math \u2014 making it the primary deterministic abort trigger."),
+    chartImage("tier/tier_interception_by_exit.png", 450, 280),
+
+    bodyPara("By difficulty, Hard tasks have the highest interception rate (27.5% ANY), followed by Medium (23.1%) and Easy (20.4%). By intent, SPLIT_LOOP (66.7%), REMOVE_CONTROL_FLAG (50.0%), and CONSOLIDATE_CONDITIONAL (40.0%) are flagged most often. EXTRACT_METHOD (7.1%) and INLINE_VARIABLE (12.5%) are flagged least."),
+    chartImage("tier/tier_interception_by_difficulty.png", 420, 280),
+    chartImage("tier/tier_interception_by_intent.png", 450, 280),
+
+    subHeading("4.3 Iterative Feedback Resolution"),
+    bodyPara("When the validator blocks a plan, the strategy agent replans (up to 4 iterations before aborting). The resolution rate measures how often retry cycles successfully produce acceptable output."),
+
+    ...metricTable("Resolution Rates", ["Metric", "Value"], [
+      ["System Resolution (SUCCESS / total)", "71.0% (198/279)"],
+      ["First-Pass Success (iter=1 / SUCCESS)", "78.3% (155/198)"],
+      ["Retry Rescue (retry+SUCCESS / all retries)", "34.7% (43/124)"]
+    ], [5000, 4360], false),
+    chartImage("iter/resolution_rate_summary.png", 380, 280),
+
+    bodyPara("78.3% of successful runs converge in the first strategy iteration \u2014 the planner's initial plan works. Of the 124 runs needing retry, 43 (34.7%) are rescued by the retry mechanism; the remaining 81 exhaust the 4-iteration budget and abort."),
+    chartImage("iter/strategy_iter_distribution.png", 380, 280),
+
+    bodyPara("First-pass rate declines with difficulty: Easy 81.5%, Medium 78.8%, Hard 72.5%. By intent, EXTRACT_METHOD achieves the highest first-pass rate (95.2%); SPLIT_LOOP the lowest (33.3%). CSR degrades with iteration count (58.1% \u2192 33.3%), confirming that more retries indicate harder tasks, not improvement through replanning."),
+    chartImage("iter/resolution_by_difficulty.png", 380, 280),
+    chartImage("iter/resolution_by_intent.png", 420, 300),
+
+    subHeading("4.4 Per-Tier Resolution Rate"),
+    bodyPara("Of entries where a validation tier was flagged (any iteration), what fraction eventually exit as SUCCESS? This identifies which validator issues are fatal vs. survivable."),
+
+    ...metricTable("Per-Tier Resolution Rate", ["Tier", "Flagged", "Resolved", "Resolve %"], [
+      ["Syntax", "14", "1", "7.1"],
+      ["Cyclomatic Complexity", "11", "3", "27.3"],
+      ["Boundary", "20", "9", "45.0"],
+      ["Intent Math", "77", "22", "28.6"],
+      ["Judge", "25", "18", "72.0"],
+      ["Overall", "127", "46", "36.2"]
+    ], [2800, 1800, 1800, 2960], false),
+    chartImage("iter/resolution_by_tier.png", 420, 280),
+    chartImage("iter/resolution_overall.png", 320, 280),
+
+    bodyPara("Syntax errors are near-fatal (7.1% resolve) \u2014 once the generator produces invalid code, recovery is extremely unlikely. Intent math is flagged most often (77 entries) with low 28.6% resolvability, making it the dominant bottleneck by volume. Judge flags are the most survivable (72.0%), suggesting the judge correctly identifies non-blocking issues."),
+    bodyPara("By difficulty, Medium tasks are the worst-case (76 flagged, 31.6% resolution). Easy (44.0%) and Hard (42.3%) have comparable rates, suggesting Medium tasks contain edge cases the planner struggles to correct despite appearing less complex than Hard tasks."),
+    chartImage("iter/intercept_resolution_by_difficulty.png", 380, 280),
+
+    new Paragraph({ children: [new PageBreak()] })
+  ]
+});
+
+// ═══ RESULTS: COMPUTATIONAL EFFICIENCY ═══
+sections.push({
+  properties: {
+    page: {
+      size: { width: 12240, height: 15840 },
+      margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 }
+    }
+  },
+  children: [
+    new Paragraph({ children: [new PageBreak()] }),
+    sectionHeading("5. Computational Efficiency"),
+
+    subHeading("5.1 Inference Time"),
+    ...metricTable("Duration Statistics (SUCCESS-Only)", ["Metric", "Single (7B)", "Multi (3B\u00D7N)"], [
+      ["Mean (s)", "20.4", "75.8"],
+      ["Median (s)", "17.8", "61.6"],
+      ["ABORT Mean (s)", "\u2014", "146.0"],
+      ["Total Wall Time (h)", "1.6", "7.5"]
+    ], [3120, 3120, 3120], false),
+    chartImage("efficiency/duration_comparison.png", 420, 280),
+
+    bodyPara("The multi-agent system is ~3.7\u00D7 slower than the single model on SUCCESS runs. ABORT_STRATEGY runs are the slowest (146s mean), as the strategy agent consumes its full 4-iteration budget before giving up. Multi averages 5,920 ms per inference call (avg_gen_ms)."),
+
+    subHeading("5.2 GPU Memory Usage"),
+    ...metricTable("Peak GPU Memory (MB)", ["Metric", "Single (7B)", "Multi (3B\u00D7N)"], [
+      ["Mean (MB)", "3,877", "3,108"],
+      ["Median (MB)", "3,876", "3,236"],
+      ["Min (MB)", "3,870", "2,738"],
+      ["Max (MB)", "3,955", "3,236"]
+    ], [3120, 3120, 3120], false),
+    chartImage("efficiency/gpu_memory_comparison.png", 420, 280),
+
+    bodyPara("Multi uses 19.8% less VRAM than Single (3,108 vs 3,877 MB). Multi shows a bimodal memory profile: ABORT_STRATEGY runs peak at ~2.7 GB (planner only, generator never invoked), while SUCCESS runs peak at ~3.2 GB (full pipeline loaded). The single model consistently operates at ~3.9 GB."),
+
+    subHeading("5.3 Statistical Significance"),
+    bodyPara("Wilcoxon signed-rank tests on 195 paired SUCCESS tasks (both architectures produced output on the same task) confirm both differences are overwhelmingly significant."),
+
+    ...metricTable("Wilcoxon Signed-Rank Results (195 Pairs)", ["Metric", "Median Diff", "p-value", "Significant?"], [
+      ["Duration (Multi - Single)", "+45.0 s", "9.5e-34", "Yes"],
+      ["GPU Memory (Multi - Single)", "-642 MB", "6.8e-35", "Yes"]
+    ], [3120, 2080, 2080, 2080], false),
+    chartImage("efficiency/wilcoxon_paired_diffs.png", 420, 280),
+
+    bodyPara("The paired difference distributions confirm consistent directional effects across all 195 tasks \u2014 Multi is uniformly slower and more memory-efficient per-task, with no crossover. The effects are not driven by outliers."),
+
+    new Paragraph({ children: [new PageBreak()] })
+  ]
+});
+
 // ═══ DISCUSSION ═══
 sections.push({
   properties: {
@@ -389,24 +527,26 @@ sections.push({
     }
   },
   children: [
-    sectionHeading("4. Discussion"),
+    sectionHeading("6. Discussion"),
 
-    subHeading("4.1 Can 3B Multi-Agent Match 7B Single-Model Quality?"),
+    subHeading("6.1 Can 3B Multi-Agent Match 7B Single-Model Quality?"),
     bodyPara("The evidence is encouraging. Across the four evaluation metrics, the multi-agent 3B system performs at or near the 7B baseline despite using models less than half the individual parameter count:"),
     bodyPara("BER: Multi wins (12.4% vs. 11.0%). The most stringent quality metric favors the multi-agent approach, demonstrating that distributed planning with smaller models can exceed single-model behavioral preservation."),
     bodyPara("CC and MI: Comparable, with Multi showing tighter output variance. The pipeline's structured decomposition filters out extreme outputs."),
     bodyPara("CSR: Single leads by 5\u20139 percentage points, but the gap is concentrated in the strategy agent's abort rate. Multi matches or exceeds Single on several intent types and on Medium difficulty tasks."),
 
-    subHeading("4.2 The Abort Rate as a Design Choice"),
+    subHeading("6.2 The Abort Rate as a Design Choice"),
     bodyPara("The multi-agent system's 29% ABORT_STRATEGY rate should be interpreted as a tunable safety margin, not a ceiling. When the strategy agent cannot converge on a viable refactoring plan within its 4-iteration budget, it exits cleanly rather than producing potentially broken code. This is fundamentally different from Single's NO_CHANGE exits (2.5%), where the model silently returns unchanged code without indicating that no transformation was attempted."),
     bodyPara("The strategy agent's abort rate is tunable via: increasing the iteration budget, improving convergence heuristics, or relaxing plan-acceptance criteria. These are implementation-level optimizations, not architectural limitations. At the same time, the current conservative threshold ensures high precision on outputs that do get produced."),
 
-    subHeading("4.3 Intent-Specific Strengths"),
+    subHeading("6.3 Intent-Specific Strengths"),
     bodyPara("The multi-agent architecture shows clear advantages on well-scoped, procedural transformations (INLINE_METHOD, CONSOLIDATE_CONDITIONAL, EXTRACT_CONSTANT) where the strategy\u2013syntax decomposition maps naturally to the task structure. Single retains an edge on control-flow-heavy transformations (DECOMPOSE_CONDITIONAL, FLATTEN_CONDITIONAL, SPLIT_LOOP) that require holistic code understanding."),
     bodyPara("This pattern suggests a hybrid routing strategy: use the multi-agent pipeline for structured, procedural intents and fall back to the single model for complex control-flow transformations. Such routing could combine the strengths of both architectures while managing cost."),
 
-    subHeading("4.4 Cost\u2013Quality Tradeoffs"),
-    bodyPara("The multi-agent system uses 3B-parameter models \u2014 less than half the size and significantly lower inference cost than the 7B baseline. On behavioral equivalence, the most important quality metric, the smaller models win. On compilation reliability, the gap is addressable through strategy-agent tuning. For cost-sensitive deployments where a moderate CSR reduction is acceptable in exchange for equivalent or superior behavioral quality, the multi-agent approach is already viable."),
+    subHeading("6.4 Validation and Efficiency"),
+    bodyPara("The deterministic validation pipeline provides a structured safety net: 45.5% of runs are intercepted, with intent-math (27.6%) as the dominant gate. Per-tier resolution analysis shows syntax errors are near-fatal (7.1% resolve), while judge flags are highly survivable (72.0%) \u2014 validating the judge's role in filtering non-blocking issues."),
+    bodyPara("Computational tradeoffs are clear and statistically significant: the multi-agent system is 3.7\u00D7 slower but uses 20% less VRAM (Wilcoxon p < 10\u207B\u00B3\u00B3). On consumer-grade hardware with limited GPU memory (<4 GB), the multi-agent system's lower VRAM footprint makes it viable where the 7B model may not fit. The ABORT_STRATEGY runs (146s mean) represent 29% of cycles spent without productive output \u2014 optimizing the abort threshold would improve throughput directly."),
+    bodyPara("The retry mechanism rescues 34.7% of initially failing runs, with 78.3% of successes converging on the first strategy iteration. Higher iteration counts do not improve outcomes (CSR degrades from 58.1% to 33.3%), indicating the retry loop effectively filters rather than rehabilitates difficult tasks."),
 
     new Paragraph({ children: [new PageBreak()] })
   ]
@@ -421,21 +561,26 @@ sections.push({
     }
   },
   children: [
-    sectionHeading("5. Conclusion"),
+    sectionHeading("7. Conclusion"),
     bodyPara("This benchmark evaluation compared a multi-agent system of 3B-parameter LLMs against a single 7B-parameter LLM on 279 Java refactoring tasks. The multi-agent system \u2014 despite using models less than half the size \u2014 achieves comparable or superior performance on three of four quality metrics."),
     bodyPara("The headline result: on behavioral equivalence rate (BER), the multi-agent system wins (12.4% vs. 11.0%). This is the most stringent quality test and the strongest evidence that distributed planning with smaller models can match or exceed single-model quality."),
     bodyPara("On cyclomatic complexity and maintainability index, both architectures perform comparably, with the multi-agent system showing tighter output variance \u2014 fewer extreme errors."),
     bodyPara("On compilation success rate, the single model leads (66.5% vs. 57.1% SUCCESS-only). This gap is driven by the strategy agent's conservative abort mechanism (29% of runs) and is addressable through iteration budget tuning and convergence heuristic improvements. The gap is architectural, not fundamental."),
+    bodyPara("On system features: the deterministic validation pipeline intercepts 45.5% of runs (intent-math dominant at 27.6%). When issues are flagged, overall resolution rate is 36.2% \u2014 78.3% of successes converge on the first strategy iteration, and the retry mechanism rescues 34.7% of initially failing runs. Per-tier analysis shows syntax errors are near-fatal (7.1% resolve) while judge flags are most survivable (72.0%)."),
+    bodyPara("On computational efficiency: the multi-agent system is 3.7\u00D7 slower but uses 20% less VRAM (both differences statistically significant at p < 10\u207B\u00B3\u00B3 via Wilcoxon signed-rank test on 195 paired tasks). The VRAM efficiency advantage makes the multi-agent approach viable on consumer-grade hardware where 7B models may not fit."),
 
     new Paragraph({ spacing: { before: 400 } }),
     ...metricTable("Final Summary (SUCCESS-Only Where Applicable)", ["Metric", "Single (7B)", "Multi (3B\u00D7N)", "Assessment"], [
-      ["CSR (RAW, %)", "67.38", "62.37", "Single +5pp (tunable gap)"],
+      ["CSR (RAW, %)", "67.38", "62.37", "Single +5pp (tunable)"],
       ["CSR Medium (RAW, %)", "64.74", "65.38", "Multi wins"],
       ["BER (SUCCESS, %)", "11.05", "12.39", "Multi wins"],
       ["Mean \u0394CC (SUCCESS)", "-0.03", "-0.26", "Comparable"],
-      ["CC Std Dev (\u00B1\u03C3)", "1.30", "0.96", "Multi tighter"],
       ["Mean \u0394MI (SUCCESS)", "-1.70", "-2.05", "Comparable"],
-      ["ABORT/NO_CHANGE", "7 (2.5%)", "81 (29.0%)", "Tunable safety"]
+      ["Validation Interception", "\u2014", "45.5%", "Tier-based safety net"],
+      ["First-Pass Rate", "\u2014", "78.3%", "Strong initial planning"],
+      ["Retry Rescue Rate", "\u2014", "34.7%", "Moderate recovery"],
+      ["Duration (SUCCESS)", "20.4s", "75.8s", "3.7\u00D7 slower (p<1e-33)"],
+      ["GPU Memory", "3,877 MB", "3,108 MB", "20% less (p<1e-34)"]
     ], [3120, 2080, 2080, 2080], false),
 
     new Paragraph({ spacing: { before: 300 } }),
