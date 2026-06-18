@@ -169,7 +169,7 @@ async def _run_multi_entry(entry: dict, agent, validator) -> dict:
     db = MockDB()
     client = MockClient(f"bench-{num}")
     orch = Orchestrator(agent, validator, db)
-    orch.SKIP_JUDGE = False
+    orch.skip_judge = False
 
     original_generate = agent.generate
     llm_calls: list[dict] = []
@@ -315,13 +315,19 @@ def cmd_aggregate(args: argparse.Namespace) -> None:
         orig = e.get("original_code", "")
         refa = e.get("final_code", "")
         orig_cc = e.get("original_cc", 0)
-        refa_cc = e.get("refactored_cc", 0)
+        exit_st = e.get("exit_status", "")
+        if exit_st in ("ABORT_STRATEGY", "NO_CHANGE"):
+            refa_cc = orig_cc
+            cc_delta = 0
+        else:
+            refa_cc = e.get("refactored_cc", 0)
+            cc_delta = e.get("cc_delta", 0)
         _, omi = compute_mi(orig, orig_cc) if orig.strip() else (None, 0.0)
         _, rmi = compute_mi(refa, refa_cc) if refa.strip() and refa != orig else (None, 0.0)
         em.append({
             "num": e.get("num", 0), "difficulty": e.get("difficulty", "?"), "intent": e.get("intent", "?"),
             "exit_status": str(e.get("exit_status", "?")), "status": e.get("status", "FAIL"),
-            "original_cc": orig_cc, "refactored_cc": refa_cc, "cc_delta": e.get("cc_delta", 0),
+            "original_cc": orig_cc, "refactored_cc": refa_cc, "cc_delta": cc_delta,
             "duration_ms": e.get("duration_ms", 0), "strategy_iter": e.get("strategy_iter", 0),
             "code_unchanged": e.get("code_unchanged", False), "judge_verdict": e.get("judge_verdict"),
             "phase4_findings": e.get("phase4_findings", []), "gpu": e.get("gpu_metrics", {}),
@@ -782,8 +788,12 @@ def cmd_report(args: argparse.Namespace) -> None:
         dur = e.get("duration_ms", 0)
         unchanged = e.get("final_code", "").strip() == e.get("original_code", "").strip()
         orig_cc = e.get("original_cc", 0)
-        refa_cc = e.get("refactored_cc", 0)
-        cc_delta = e.get("cc_delta", 0)
+        if exit_st in ("ABORT_STRATEGY", "NO_CHANGE"):
+            refa_cc = orig_cc
+            cc_delta = 0
+        else:
+            refa_cc = e.get("refactored_cc", 0)
+            cc_delta = e.get("cc_delta", 0)
 
         # Halstead MI
         final_code = e.get("final_code", "")
